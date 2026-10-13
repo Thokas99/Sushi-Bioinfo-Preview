@@ -1,12 +1,37 @@
-# Local analysis / GitNexus state
+# Local GitNexus/assistant state
 .gitnexus/
 .claude/
 CLAUDE.md
 repomix-output.xml
 
-# Development and editor output
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Dependencies and test output
 node_modules/
 coverage/
-*.log
+.nyc_output/
+npm-debug.log*
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Editor, temporary, and operating-system files
 *~
+*.swp
+*.swo
+*.tmp
+*.orig
+*.rej
+*.log
 .DS_Store
+Thumbs.db
+Desktop.ini
