@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <!-- These types only match genomics-specific extensions, not all text/plain. -->
+  <mime-type type="text/x-sushi-bed">
+    <comment>BED genomic intervals</comment>
+    <sub-class-of type="text/plain"/>
+    <glob weight="80" pattern="*.bed"/>
+    <glob weight="80" pattern="*.bedgraph"/>
+    <glob weight="80" pattern="*.narrowPeak"/>
+    <glob weight="80" pattern="*.broadPeak"/>
+  </mime-type>
+  <mime-type type="text/x-sushi-vcf">
+    <comment>Variant Call Format</comment>
+    <sub-class-of type="text/plain"/>
+    <glob weight="80" pattern="*.vcf"/>
+  </mime-type>
+  <mime-type type="text/x-sushi-mtx">
+    <comment>Matrix Market matrix</comment>
+    <sub-class-of type="text/plain"/>
+    <glob weight="80" pattern="*.mtx"/>
+  </mime-type>
+  <mime-type type="text/x-sushi-gff">
+    <comment>GFF/GTF genomic annotations</comment>
+    <sub-class-of type="text/plain"/>
+    <glob weight="80" pattern="*.gff"/>
+    <glob weight="80" pattern="*.gff3"/>
+    <glob weight="80" pattern="*.gtf"/>
+  </mime-type>
+  <mime-type type="application/x-sushi-h5ad">
+    <comment>AnnData H5AD data</comment>
+    <glob weight="80" pattern="*.h5ad"/>
+  </mime-type>
+  <mime-type type="application/x-sushi-parquet">
+    <comment>Apache Parquet data</comment>
+    <glob weight="80" pattern="*.parquet"/>
+  </mime-type>
+  <!-- Markdown only. HTML is left to the built-in Sushi renderer. -->
+  <mime-type type="text/x-sushi-markdown">
+    <comment>Markdown preview document</comment>
+    <sub-class-of type="text/plain"/>
+    <glob weight="95" pattern="*.md"/>
+    <glob weight="95" pattern="*.markdown"/>
+    <glob weight="95" pattern="*.mdown"/>
+  </mime-type>
+</mime-info>

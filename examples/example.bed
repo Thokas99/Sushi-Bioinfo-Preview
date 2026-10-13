@@ -1,0 +1,5 @@
+track name="illustrative_peaks" description="Synthetic BED intervals"
+chr1	10000	10150	peak_001	580	+
+chr2	25000	25120	peak_002	920	-
+chr7	55000	55190	peak_003	710	.
+chr17	90000	90250	peak_004	400	+

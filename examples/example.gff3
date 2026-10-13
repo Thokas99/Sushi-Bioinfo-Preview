@@ -1,0 +1,6 @@
+##gff-version 3
+##sequence-region synthetic_chr1 1 12000
+synthetic_chr1	synthetic	gene	101	920	.	+	.	ID=gene-syn-1;Name=ExampleGeneA
+synthetic_chr1	synthetic	mRNA	101	920	.	+	.	ID=transcript-syn-1;Parent=gene-syn-1
+synthetic_chr1	synthetic	exon	101	240	.	+	.	ID=exon-syn-1;Parent=transcript-syn-1
+synthetic_chr1	synthetic	exon	501	920	.	+	.	ID=exon-syn-2;Parent=transcript-syn-1

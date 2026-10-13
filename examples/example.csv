@@ -1,0 +1,6 @@
+gene,log2FoldChange,padj,comparison
+TP53,1.7,0.001,treated_vs_control
+MYC,-0.9,0.042,treated_vs_control
+STAT1,1.2,0.0007,treated_vs_control
+CXCL10,2.4,0.003,treated_vs_control
+MKI67,-0.2,0.64,treated_vs_control

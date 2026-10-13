@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {escapeHtml, renderMarkdown, markdownDocument, CSP, DOC_LIMIT} from '../src/document-core.js';
+assert.equal(escapeHtml('<script>"&'), '&lt;script&gt;&quot;&amp;');
+let html = renderMarkdown('# Title\n\n**strong** and *italics*\n\n| Gene | FDR |\n|---|---|\n| TP53 | 0.01 |');
+assert.match(html, /<h1>Title<\/h1>/);
+assert.match(html, /<strong>strong<\/strong>/);
+assert.match(html, /<table>/);
+assert.match(html, /TP53/);
+assert.doesNotMatch(markdownDocument('<script>alert(1)</script>'), /<script>/);
+assert.match(markdownDocument('hello'), /Content-Security-Policy/);
+assert.match(CSP, /script-src 'none'/);
+assert.equal(DOC_LIMIT, 262144);
+console.log('Markdown rendering and security checks passed');

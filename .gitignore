@@ -1,0 +1,12 @@
+# Local analysis / GitNexus state
+.gitnexus/
+.claude/
+CLAUDE.md
+repomix-output.xml
+
+# Development and editor output
+node_modules/
+coverage/
+*.log
+*~
+.DS_Store

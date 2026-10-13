@@ -1,0 +1,5 @@
+cell_id	sample_id	cell_type	nCount_RNA	percent.mt
+AAAC-1	PBMC_01	CD14_Monocyte	4862	3.2
+AAAG-1	PBMC_01	CD4_T	3280	2.1
+AAAT-1	PBMC_02	NK	2890	4.0
+AACG-1	PBMC_02	B_cell	3844	1.7

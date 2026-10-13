@@ -1,0 +1,10 @@
+{
+  "name": "sushi-bioinfo-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "python3 build.py",
+    "test": "bash tests/run.sh"
+  }
+}
