@@ -26,6 +26,12 @@ Sushi Bioinfo Preview adds small, native GTK views for file types Sushi does not
 > [!IMPORTANT]
 > These are previews, not file validators. Large files are read only up to configured limits, so later records may be absent; malformed or truncated data may still produce a plausible-looking partial view. Use format-aware tools to validate or analyze a complete dataset.
 
+## Table interaction
+
+Right-click a cell to copy its retained value, copy the row as TSV, or inspect the value in a small popover. Double-click also opens the inspection popover. With the table focused, **Ctrl+C** copies the selected row as TSV. A field longer than the retained limit is shortened and marked in the inspection view.
+
+The `#` gutter shows each displayed record's position in the sampled data before sorting. Headers and format-skipped comment or metadata lines are not counted; for Matrix Market files it numbers displayed entries. It is not a physical file line number. Sorting affects only loaded rows, keeps equal values in their original order, and sorts inferred numeric columns numerically. Missing values follow GTK's sort direction: last in ascending order and first in descending order.
+
 ## Install
 
 With the GNOME Sushi Flatpak (`org.gnome.NautilusPreviewer`) and the host tools `flatpak` and `update-mime-database` installed, run:
@@ -48,7 +54,7 @@ flatpak kill org.gnome.NautilusPreviewer 2>/dev/null || true
 
 ## Limits
 
-Table previews start at the beginning of a file and default to a 16 MiB prefix, 10,000 rows, and 128 columns. Sorting applies only to rows already loaded. Reads can be cancelled, while parsing and GTK model construction happen on the UI thread; very large previews or remote storage can briefly delay interaction.
+Table previews start at the beginning of a file and default to a 16 MiB prefix, 10,000 rows, 128 columns, and 512 characters per field. Muted status text and its tooltip identify limits; a preview may omit later rows or a trailing partial record. Inspection and copying use retained values, not text shortened only for display. Sorting applies only to loaded rows. Reads can be cancelled, while parsing and GTK model construction happen on the UI thread; very large previews or remote storage can briefly delay interaction.
 
 <details>
 <summary>Optional table limits</summary>

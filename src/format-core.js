@@ -39,6 +39,7 @@ function splitLines(text, partial) {
     const maxLines = LIMITS.rows + 8192;
     const lines = [];
     let cursor = text.charCodeAt(0) === 0xFEFF ? 1 : 0;
+    let incompleteRecord = false;
     while (cursor < text.length && lines.length < maxLines) {
         const lf = text.indexOf('\n', cursor);
         const cr = text.indexOf('\r', cursor);
@@ -48,19 +49,21 @@ function splitLines(text, partial) {
         else end = Math.min(lf, cr);
         if (end === -1) {
             if (!partial) lines.push(text.slice(cursor));
+            else incompleteRecord = cursor < text.length;
+            cursor = text.length;
             break;
         }
         lines.push(text.slice(cursor, end));
         cursor = end + (text[end] === '\r' && text[end + 1] === '\n' ? 2 : 1);
     }
-    return lines;
+    return {lines, incompleteRecord, lineLimit: cursor < text.length};
 }
 
 function cleanRows(lines, skip, maxRows) {
     return lines.filter(s => s.trim() && !skip(s)).slice(0, maxRows);
 }
 
-function trimDelimited(line, cols) {
+function trimDelimited(line, cols, clippedFields = null, rowIndex = 0) {
     // Extract only the columns we display; never split a huge row into
     // arbitrarily many temporary strings.
     const cells = [];
@@ -68,6 +71,11 @@ function trimDelimited(line, cols) {
     while (cells.length < cols) {
         const next = line.indexOf('\t', pos);
         const end = next === -1 ? line.length : next;
+        if (end - pos > LIMITS.fieldChars && clippedFields) {
+            const columns = clippedFields.get(rowIndex) ?? [];
+            columns.push(cells.length);
+            clippedFields.set(rowIndex, columns);
+        }
         cells.push(line.slice(pos, Math.min(end, pos + LIMITS.fieldChars)));
         if (next === -1) break;
         pos = next + 1;
@@ -85,7 +93,7 @@ function exceedsColumns(line, max) {
     return true;
 }
 
-function trimWhitespace(line, columns) {
+function trimWhitespace(line, columns, clippedFields = null, rowIndex = 0) {
     const cells = [];
     let cursor = 0;
     while (cells.length < columns) {
@@ -93,6 +101,11 @@ function trimWhitespace(line, columns) {
         if (cursor === line.length) break;
         let end = cursor;
         while (end < line.length && !/\s/.test(line[end])) end++;
+        if (end - cursor > LIMITS.fieldChars && clippedFields) {
+            const clipped = clippedFields.get(rowIndex) ?? [];
+            clipped.push(cells.length);
+            clippedFields.set(rowIndex, clipped);
+        }
         cells.push(line.slice(cursor, Math.min(end, cursor + LIMITS.fieldChars)));
         cursor = end;
     }
@@ -100,37 +113,50 @@ function trimWhitespace(line, columns) {
     return {cells, extra: cursor < line.length};
 }
 
-function result(kind, headers, lines, columns, notes) {
-    const rows = lines.slice(0, LIMITS.rows).map(line => trimDelimited(line, columns));
-    const nc = Math.min(LIMITS.columns, kind === 'BED intervals'
-        ? Math.max(3, ...rows.map(r => r.length), 0)
-        : Math.max(headers.length, ...rows.map(r => r.length), 0));
+function result(kind, headers, lines, columns, notes, incompleteRecord = false, lineLimit = false, partial = false) {
+    const rows = [];
+    const truncatedFields = new Map();
+    for (let index = 0; index < Math.min(lines.length, LIMITS.rows); index++)
+        rows.push(trimDelimited(lines[index], columns, truncatedFields, index));
+    let nc = kind === 'BED intervals' ? 3 : headers.length;
+    for (const row of rows) nc = Math.max(nc, row.length);
+    nc = Math.min(LIMITS.columns, nc);
     const names = Array.from({length: nc}, (_, i) => headers[i] || `Column ${i + 1}`);
-    return {kind, headers: names, rows, notes,
-        rowLimit: lines.length > LIMITS.rows,
+    return {kind, headers: names, rows, notes, truncatedFields,
+        clippedFields: truncatedFields.size > 0, truncatedHeader: false,
+        incompleteRecord, truncatedBytes: partial || lineLimit,
+        truncatedRows: lines.length > LIMITS.rows || lineLimit,
+        rowLimit: lines.length > LIMITS.rows || lineLimit,
         colLimit: headers.length > LIMITS.columns || lines.some(line => exceedsColumns(line, LIMITS.columns))};
 }
 
 export function genomicPreview(name, text, partial) {
     const kind = formatFromName(name);
-    const lines = splitLines(text, partial);
+    const split = splitLines(text, partial);
+    const {lines, incompleteRecord, lineLimit} = split;
     if (kind === 'vcf') {
         const meta = lines.filter(line => line.startsWith('##'));
         const headerLine = lines.find(line => line.startsWith('#CHROM\t'));
-        const headers = headerLine ? trimDelimited(headerLine.slice(1), LIMITS.columns + 1) :
+        const headerClips = new Map();
+        const headers = headerLine ? trimDelimited(headerLine.slice(1), LIMITS.columns + 1, headerClips) :
             ['CHROM','POS','ID','REF','ALT','QUAL','FILTER','INFO','FORMAT'];
         const records = cleanRows(lines, x => x.startsWith('#'), LIMITS.rows + 1);
         const samples = Math.max(0, headers.length - 9);
-        return result('VCF variants', headers, records, LIMITS.columns,
+        const preview = result('VCF variants', headers, records, LIMITS.columns,
             ['POS uses 1-based coordinates', 'INFO/FORMAT displayed as text; no genotype interpretation',
-                `${samples} sample columns in header`, `${meta.length} header metadata lines in sample`]);
+                `${samples} sample columns in header`, `${meta.length} header metadata lines in sample`],
+            incompleteRecord, lineLimit, partial);
+        preview.truncatedHeader = headerClips.has(0);
+        preview.clippedFields ||= preview.truncatedHeader;
+        return preview;
     }
     if (kind === 'bed') {
         const headers = ['chrom','chromStart','chromEnd','name','score','strand',
             'thickStart','thickEnd','itemRgb','blockCount','blockSizes','blockStarts'];
         const records = cleanRows(lines, x => /^(#|track\b|browser\b)/i.test(x), LIMITS.rows + 1);
         return result('BED intervals', headers, records, LIMITS.columns,
-            ['BED starts are 0-based; ends are exclusive', 'Columns are positional; additional columns are generic']);
+            ['BED starts are 0-based; ends are exclusive', 'Columns are positional; additional columns are generic'],
+            incompleteRecord, lineLimit, partial);
     }
     if (kind === 'gff') {
         const headers = ['seqid','source','type','start','end','score','strand','phase','attributes'];
@@ -138,7 +164,8 @@ export function genomicPreview(name, text, partial) {
         const annotationLines = fastaStart >= 0 ? lines.slice(0, fastaStart) : lines;
         const records = cleanRows(annotationLines, x => x.startsWith('#'), LIMITS.rows + 1);
         return result('GFF / GTF features', headers, records, LIMITS.columns,
-            ['GFF/GTF starts and ends are 1-based inclusive', 'Attributes are not expanded']);
+            ['GFF/GTF starts and ends are 1-based inclusive', 'Attributes are not expanded'],
+            incompleteRecord, lineLimit, partial);
     }
     if (kind === 'mtx') {
         const mark = lines.find(x => /^%%MatrixMarket\s/i.test(x));
@@ -148,10 +175,15 @@ export function genomicPreview(name, text, partial) {
         const field = banner?.[2].toLowerCase();
         if (!banner || (storage === 'array' && field === 'pattern')) {
             const raw = content.slice(0, LIMITS.rows);
+            const clippedRows = new Map();
+            raw.forEach((line, index) => { if (line.length > LIMITS.fieldChars) clippedRows.set(index, [0]); });
             return {kind: 'Matrix Market text', headers: ['line'], rows: raw.map(line => [line.slice(0, LIMITS.fieldChars)]),
                 notes: ['Unsupported or invalid Matrix Market banner; non-comment lines are shown as text',
                     (mark ?? 'No MatrixMarket banner found').slice(0, 140)],
-                rowLimit: content.length > LIMITS.rows, colLimit: false};
+                rowLimit: content.length > LIMITS.rows, truncatedRows: content.length > LIMITS.rows || lineLimit,
+                truncatedBytes: partial || lineLimit, incompleteRecord,
+                truncatedFields: clippedRows, clippedFields: clippedRows.size > 0,
+                truncatedHeader: false, colLimit: false};
         }
         const dimensionCount = storage === 'coordinate' ? 3 : 2;
         const dimensionRow = trimWhitespace(content[0] ?? '', dimensionCount + 1);
@@ -170,16 +202,26 @@ export function genomicPreview(name, text, partial) {
                 : field === 'complex' ? ['row','column','real','imaginary'] : ['row','column','value'])
             : field === 'complex' ? ['real','imaginary'] : ['value'];
         // MTX uses whitespace, not TSV; do not use the generic delimited parser.
-        const parsed = entries.slice(0, LIMITS.rows).map(line => trimWhitespace(line, headers.length));
-        const malformed = parsed.filter(row => row.cells.length !== headers.length || row.extra).length;
+        const rows = [];
+        const truncatedFields = new Map();
+        let malformed = 0;
+        entries.slice(0, LIMITS.rows).forEach((line, index) => {
+            const row = trimWhitespace(line, headers.length, truncatedFields, index);
+            rows.push(row.cells);
+            if (row.cells.length !== headers.length || row.extra) malformed++;
+        });
         const notes = [matrixInfo, isCoordinate
             ? 'Coordinate indices are 1-based; entries are not expanded into a dense matrix'
             : 'Dense array values are shown in storage order; symmetry is not expanded',
             (mark ?? 'No MatrixMarket banner found').slice(0, 140)];
         if (malformed) notes.push(`${malformed} sampled entries have unexpected field counts; extra fields are omitted`);
         return {kind: isArray ? 'Matrix Market array' : 'Matrix Market coordinates', headers,
-            rows: parsed.map(row => row.cells), notes,
-            rowLimit: entries.length > LIMITS.rows, colLimit: false};
+            rows, notes,
+            rowLimit: entries.length > LIMITS.rows || lineLimit,
+            truncatedRows: entries.length > LIMITS.rows || lineLimit,
+            truncatedBytes: partial || lineLimit, incompleteRecord,
+            truncatedFields, clippedFields: truncatedFields.size > 0,
+            truncatedHeader: false, colLimit: false};
     }
     return null;
 }

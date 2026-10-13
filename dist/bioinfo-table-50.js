@@ -1,5 +1,5 @@
 /* Sushi Bioinfo Preview — native GTK3 tree table. SPDX-License-Identifier: MIT */
-const {Gio, GLib, GObject, Gtk, Pango} = imports.gi;
+const {Gdk, Gio, GLib, GObject, Gtk, Pango} = imports.gi;
 const ByteArray = imports.byteArray;
 const Renderer = imports.ui.renderer;
 /* SPDX-License-Identifier: MIT
@@ -36,20 +36,30 @@ function parseDelimited(text, separator, options = {}) {
     let inQuotes = false;
     let clippedColumns = false;
     let clippedFields = false;
+    const clippedFieldColumns = new Map();
+    let fieldClipped = false;
     let hitRowLimit = false;
     let startOfField = true;
 
     const append = ch => {
         if (field.length < fieldChars)
             field += ch;
-        else
+        else {
             clippedFields = true;
+            if (!fieldClipped && fullCols < colLimit) {
+                const columns = clippedFieldColumns.get(rows.length) ?? [];
+                columns.push(fullCols);
+                clippedFieldColumns.set(rows.length, columns);
+            }
+            fieldClipped = true;
+        }
     };
     const flushField = () => {
         if (fullCols < colLimit) row.push(field);
         else clippedColumns = true;
         fullCols++;
         field = '';
+        fieldClipped = false;
         startOfField = true;
     };
     const flushRow = () => {
@@ -93,7 +103,7 @@ function parseDelimited(text, separator, options = {}) {
     const unfinished = fullCols > 0 || field.length > 0 || !startOfField;
     if (unfinished && rows.length < rowLimit && keepPartial && !inQuotes) flushRow();
     return {
-        rows, widths, clippedColumns, clippedFields, hitRowLimit,
+        rows, widths, clippedColumns, clippedFields, clippedFieldColumns, hitRowLimit,
         droppedPartial: unfinished && !keepPartial,
         unterminatedQuote: inQuotes,
     };
@@ -130,8 +140,12 @@ function prepareTable(text, separator, hasHeader = true, partialByteRead = false
     });
     const all = parsed.rows;
     const originalHeaders = hasHeader ? (all.shift() ?? []) : [];
-    const rows = all.slice(0, LIMITS.rows);
-    const cols = Math.min(LIMITS.columns, Math.max(0, originalHeaders.length, ...rows.map(row => row.length)));
+    const parsedRowCount = all.length;
+    if (all.length > LIMITS.rows) all.length = LIMITS.rows;
+    const rows = all;
+    let cols = originalHeaders.length;
+    for (const row of rows) cols = Math.max(cols, row.length);
+    cols = Math.min(LIMITS.columns, cols);
     const used = new Set();
     const headers = Array.from({length: cols}, (_, i) => {
         const raw = hasHeader ? (originalHeaders[i] ?? '').trim() : '';
@@ -142,12 +156,21 @@ function prepareTable(text, separator, hasHeader = true, partialByteRead = false
         used.add(name);
         return name;
     });
+    const truncatedFields = new Map();
+    rows.forEach((_, index) => {
+        const columns = parsed.clippedFieldColumns.get(index + (hasHeader ? 1 : 0));
+        if (columns) truncatedFields.set(index, columns);
+    });
+    const truncatedHeader = hasHeader && (parsed.clippedFieldColumns.get(0)?.length ?? 0) > 0;
     return {
         headers, rows, separator, hasHeader,
-        truncatedRows: parsed.hitRowLimit || all.length > LIMITS.rows || (partialByteRead && parsed.droppedPartial),
+        truncatedRows: parsed.hitRowLimit || parsedRowCount > LIMITS.rows,
         truncatedBytes: partialByteRead,
-        clippedFields: parsed.clippedFields,
+        clippedFields: truncatedHeader || truncatedFields.size > 0,
+        truncatedHeader,
+        truncatedFields,
         clippedColumns: parsed.clippedColumns,
+        incompleteRecord: partialByteRead && parsed.droppedPartial,
         raggedRows: parsed.widths.filter(w => w !== cols).length,
         quoteWarning: parsed.unterminatedQuote && !partialByteRead,
     };
@@ -156,7 +179,7 @@ function prepareTable(text, separator, hasHeader = true, partialByteRead = false
 function isMissing(v) {
     if (v === undefined || v === null) return true;
     const s = v.trim();
-    return s === '' || /^(NA|N\/A|NULL|NONE|NAN)$/i.test(s);
+    return s === '' || s === '.' || /^(NA|N\/A|NULL|NONE|NAN)$/i.test(s);
 }
 
 function numericValue(v) {
@@ -167,21 +190,38 @@ function numericValue(v) {
     return Number.isFinite(n) ? n : null;
 }
 
-function compareCells(left, right, type, leftIndex = 0, rightIndex = 0, descending = false) {
+function compareCells(left, right, type, descending = false) {
     const aMissing = isMissing(left), bMissing = isMissing(right);
-    if (aMissing && bMissing) return leftIndex - rightIndex;
-    if (aMissing) return 1;
-    if (bMissing) return -1;
+    if (aMissing && bMissing) return 0;
+    if (aMissing) return descending ? -1 : 1;
+    if (bMissing) return descending ? 1 : -1;
     let diff;
     if (type === 'number') {
-        const a = numericValue(left), b = numericValue(right);
-        diff = a === null || b === null ? left.localeCompare(right) : a - b;
+        const x = left.trim(), y = right.trim();
+        if (/^[+-]?\d+$/.test(x) && /^[+-]?\d+$/.test(y)) {
+            const a = Number(x), b = Number(y);
+            if (Number.isSafeInteger(a) && Number.isSafeInteger(b))
+                diff = a < b ? -1 : a > b ? 1 : 0;
+            else {
+                const exactA = BigInt(x), exactB = BigInt(y);
+                diff = exactA < exactB ? -1 : exactA > exactB ? 1 : 0;
+            }
+        } else {
+            // shortcut: decimal comparison uses JS Number precision, upgrade if exact decimal ordering is required.
+            const a = numericValue(x), b = numericValue(y);
+            diff = a === null ? (b === null ? x.localeCompare(y) : 1)
+                : b === null ? -1 : a < b ? -1 : a > b ? 1 : 0;
+        }
     } else diff = left.localeCompare(right, undefined, {numeric: true});
-    return diff === 0 ? leftIndex - rightIndex : (descending ? -diff : diff);
+    return descending ? -diff : diff;
 }
 
-function guessTypes(rows, count) {
+function guessTypes(rows, count, headers = []) {
     return Array.from({length: count}, (_, col) => {
+        const header = headers[col] ?? '';
+        if (/^(?:#?chrom(?:osome)?|chr|seqid|gene|sample|cell|barcode|accession|name|id|contig)$/i.test(header) ||
+            /_(?:id|name|barcode|accession)$/i.test(header))
+            return 'text';
         let present = 0;
         let numeric = 0;
         for (const row of rows.slice(0, 500)) {
@@ -198,7 +238,7 @@ function sortRows(rows, sortColumn, descending, types) {
     const sorted = rows.map((cells, originalIndex) => ({cells, originalIndex}));
     if (sortColumn !== null && sortColumn >= 0)
         sorted.sort((a, b) => compareCells(a.cells[sortColumn] ?? '', b.cells[sortColumn] ?? '',
-            types[sortColumn], a.originalIndex, b.originalIndex, descending));
+            types[sortColumn], descending));
     return sorted;
 }
 
@@ -207,16 +247,45 @@ function sortRows(rows, sortColumn, descending, types) {
  */
 function columnWidthHints(headers, rows, types = []) {
     return headers.map((header, col) => {
-        let longest = Math.min(40, String(header).length);
+        const numeric = types[col] === 'number';
+        let longest = Math.min(numeric ? 28 : 32, String(header).length);
         // Scan no more than 64 sample rows; do not infer widths from entire files.
         for (const row of rows.slice(0, 64)) {
             const length = String(row[col] ?? '').replace(/[\r\n\t]/g, ' ').length;
-            longest = Math.max(longest, Math.min(length, 40));
+            longest = Math.max(longest, Math.min(length, numeric ? 20 : 32));
         }
-        // Numeric values tend to require narrower cells. Keep a readable header.
-        const minimum = types[col] === 'number' ? 84 : 94;
-        return Math.max(minimum, Math.min(280, Math.round(longest * 7.4 + 24)));
+        const minimum = numeric ? 64 : 88;
+        const maximum = numeric ? 220 : 280;
+        return Math.max(minimum, Math.min(maximum, Math.round(longest * 7.2 + 24)));
     });
+}
+
+function rowToTsv(cells) {
+    return cells.map(value => {
+        const text = String(value ?? '');
+        return /[\t"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join('\t');
+}
+
+function cellValueStatus(table, row, column) {
+    if (table.truncatedFields?.get(row)?.includes(column))
+        return `Field truncated to ${LIMITS.fieldChars} characters by the preview.`;
+    if (table.incompleteRecord)
+        return 'The file prefix ended inside a record; the trailing partial record was omitted.';
+    return 'Complete field retained within the sampled input.';
+}
+
+function previewStatus(table) {
+    const messages = [];
+    if (table.truncatedBytes) messages.push('Read only a bounded file prefix.');
+    if (table.incompleteRecord) messages.push('A trailing partial record was omitted.');
+    if (table.truncatedRows) messages.push(`${table.rows.length} rows shown from the file prefix; more rows may be present.`);
+    if (table.clippedColumns) messages.push(`Only the first ${LIMITS.columns} columns are shown.`);
+    if (table.truncatedHeader) messages.push('One or more header fields were truncated.');
+    if (table.clippedFields) messages.push(`One or more fields are limited to ${LIMITS.fieldChars} characters.`);
+    if (table.quoteWarning) messages.push('An unterminated quoted field prevented the final record from being parsed.');
+    if (table.truncatedFields?.size) messages.push('Double-click a cell to inspect its retained value and truncation status.');
+    return {label: messages.length ? 'Preview limited' : '', tooltip: messages.join('\n')};
 }
 
 
@@ -259,6 +328,7 @@ function splitLines(text, partial) {
     const maxLines = LIMITS.rows + 8192;
     const lines = [];
     let cursor = text.charCodeAt(0) === 0xFEFF ? 1 : 0;
+    let incompleteRecord = false;
     while (cursor < text.length && lines.length < maxLines) {
         const lf = text.indexOf('\n', cursor);
         const cr = text.indexOf('\r', cursor);
@@ -268,19 +338,21 @@ function splitLines(text, partial) {
         else end = Math.min(lf, cr);
         if (end === -1) {
             if (!partial) lines.push(text.slice(cursor));
+            else incompleteRecord = cursor < text.length;
+            cursor = text.length;
             break;
         }
         lines.push(text.slice(cursor, end));
         cursor = end + (text[end] === '\r' && text[end + 1] === '\n' ? 2 : 1);
     }
-    return lines;
+    return {lines, incompleteRecord, lineLimit: cursor < text.length};
 }
 
 function cleanRows(lines, skip, maxRows) {
     return lines.filter(s => s.trim() && !skip(s)).slice(0, maxRows);
 }
 
-function trimDelimited(line, cols) {
+function trimDelimited(line, cols, clippedFields = null, rowIndex = 0) {
     // Extract only the columns we display; never split a huge row into
     // arbitrarily many temporary strings.
     const cells = [];
@@ -288,6 +360,11 @@ function trimDelimited(line, cols) {
     while (cells.length < cols) {
         const next = line.indexOf('\t', pos);
         const end = next === -1 ? line.length : next;
+        if (end - pos > LIMITS.fieldChars && clippedFields) {
+            const columns = clippedFields.get(rowIndex) ?? [];
+            columns.push(cells.length);
+            clippedFields.set(rowIndex, columns);
+        }
         cells.push(line.slice(pos, Math.min(end, pos + LIMITS.fieldChars)));
         if (next === -1) break;
         pos = next + 1;
@@ -305,7 +382,7 @@ function exceedsColumns(line, max) {
     return true;
 }
 
-function trimWhitespace(line, columns) {
+function trimWhitespace(line, columns, clippedFields = null, rowIndex = 0) {
     const cells = [];
     let cursor = 0;
     while (cells.length < columns) {
@@ -313,6 +390,11 @@ function trimWhitespace(line, columns) {
         if (cursor === line.length) break;
         let end = cursor;
         while (end < line.length && !/\s/.test(line[end])) end++;
+        if (end - cursor > LIMITS.fieldChars && clippedFields) {
+            const clipped = clippedFields.get(rowIndex) ?? [];
+            clipped.push(cells.length);
+            clippedFields.set(rowIndex, clipped);
+        }
         cells.push(line.slice(cursor, Math.min(end, cursor + LIMITS.fieldChars)));
         cursor = end;
     }
@@ -320,37 +402,50 @@ function trimWhitespace(line, columns) {
     return {cells, extra: cursor < line.length};
 }
 
-function result(kind, headers, lines, columns, notes) {
-    const rows = lines.slice(0, LIMITS.rows).map(line => trimDelimited(line, columns));
-    const nc = Math.min(LIMITS.columns, kind === 'BED intervals'
-        ? Math.max(3, ...rows.map(r => r.length), 0)
-        : Math.max(headers.length, ...rows.map(r => r.length), 0));
+function result(kind, headers, lines, columns, notes, incompleteRecord = false, lineLimit = false, partial = false) {
+    const rows = [];
+    const truncatedFields = new Map();
+    for (let index = 0; index < Math.min(lines.length, LIMITS.rows); index++)
+        rows.push(trimDelimited(lines[index], columns, truncatedFields, index));
+    let nc = kind === 'BED intervals' ? 3 : headers.length;
+    for (const row of rows) nc = Math.max(nc, row.length);
+    nc = Math.min(LIMITS.columns, nc);
     const names = Array.from({length: nc}, (_, i) => headers[i] || `Column ${i + 1}`);
-    return {kind, headers: names, rows, notes,
-        rowLimit: lines.length > LIMITS.rows,
+    return {kind, headers: names, rows, notes, truncatedFields,
+        clippedFields: truncatedFields.size > 0, truncatedHeader: false,
+        incompleteRecord, truncatedBytes: partial || lineLimit,
+        truncatedRows: lines.length > LIMITS.rows || lineLimit,
+        rowLimit: lines.length > LIMITS.rows || lineLimit,
         colLimit: headers.length > LIMITS.columns || lines.some(line => exceedsColumns(line, LIMITS.columns))};
 }
 
 function genomicPreview(name, text, partial) {
     const kind = formatFromName(name);
-    const lines = splitLines(text, partial);
+    const split = splitLines(text, partial);
+    const {lines, incompleteRecord, lineLimit} = split;
     if (kind === 'vcf') {
         const meta = lines.filter(line => line.startsWith('##'));
         const headerLine = lines.find(line => line.startsWith('#CHROM\t'));
-        const headers = headerLine ? trimDelimited(headerLine.slice(1), LIMITS.columns + 1) :
+        const headerClips = new Map();
+        const headers = headerLine ? trimDelimited(headerLine.slice(1), LIMITS.columns + 1, headerClips) :
             ['CHROM','POS','ID','REF','ALT','QUAL','FILTER','INFO','FORMAT'];
         const records = cleanRows(lines, x => x.startsWith('#'), LIMITS.rows + 1);
         const samples = Math.max(0, headers.length - 9);
-        return result('VCF variants', headers, records, LIMITS.columns,
+        const preview = result('VCF variants', headers, records, LIMITS.columns,
             ['POS uses 1-based coordinates', 'INFO/FORMAT displayed as text; no genotype interpretation',
-                `${samples} sample columns in header`, `${meta.length} header metadata lines in sample`]);
+                `${samples} sample columns in header`, `${meta.length} header metadata lines in sample`],
+            incompleteRecord, lineLimit, partial);
+        preview.truncatedHeader = headerClips.has(0);
+        preview.clippedFields ||= preview.truncatedHeader;
+        return preview;
     }
     if (kind === 'bed') {
         const headers = ['chrom','chromStart','chromEnd','name','score','strand',
             'thickStart','thickEnd','itemRgb','blockCount','blockSizes','blockStarts'];
         const records = cleanRows(lines, x => /^(#|track\b|browser\b)/i.test(x), LIMITS.rows + 1);
         return result('BED intervals', headers, records, LIMITS.columns,
-            ['BED starts are 0-based; ends are exclusive', 'Columns are positional; additional columns are generic']);
+            ['BED starts are 0-based; ends are exclusive', 'Columns are positional; additional columns are generic'],
+            incompleteRecord, lineLimit, partial);
     }
     if (kind === 'gff') {
         const headers = ['seqid','source','type','start','end','score','strand','phase','attributes'];
@@ -358,7 +453,8 @@ function genomicPreview(name, text, partial) {
         const annotationLines = fastaStart >= 0 ? lines.slice(0, fastaStart) : lines;
         const records = cleanRows(annotationLines, x => x.startsWith('#'), LIMITS.rows + 1);
         return result('GFF / GTF features', headers, records, LIMITS.columns,
-            ['GFF/GTF starts and ends are 1-based inclusive', 'Attributes are not expanded']);
+            ['GFF/GTF starts and ends are 1-based inclusive', 'Attributes are not expanded'],
+            incompleteRecord, lineLimit, partial);
     }
     if (kind === 'mtx') {
         const mark = lines.find(x => /^%%MatrixMarket\s/i.test(x));
@@ -368,10 +464,15 @@ function genomicPreview(name, text, partial) {
         const field = banner?.[2].toLowerCase();
         if (!banner || (storage === 'array' && field === 'pattern')) {
             const raw = content.slice(0, LIMITS.rows);
+            const clippedRows = new Map();
+            raw.forEach((line, index) => { if (line.length > LIMITS.fieldChars) clippedRows.set(index, [0]); });
             return {kind: 'Matrix Market text', headers: ['line'], rows: raw.map(line => [line.slice(0, LIMITS.fieldChars)]),
                 notes: ['Unsupported or invalid Matrix Market banner; non-comment lines are shown as text',
                     (mark ?? 'No MatrixMarket banner found').slice(0, 140)],
-                rowLimit: content.length > LIMITS.rows, colLimit: false};
+                rowLimit: content.length > LIMITS.rows, truncatedRows: content.length > LIMITS.rows || lineLimit,
+                truncatedBytes: partial || lineLimit, incompleteRecord,
+                truncatedFields: clippedRows, clippedFields: clippedRows.size > 0,
+                truncatedHeader: false, colLimit: false};
         }
         const dimensionCount = storage === 'coordinate' ? 3 : 2;
         const dimensionRow = trimWhitespace(content[0] ?? '', dimensionCount + 1);
@@ -390,16 +491,26 @@ function genomicPreview(name, text, partial) {
                 : field === 'complex' ? ['row','column','real','imaginary'] : ['row','column','value'])
             : field === 'complex' ? ['real','imaginary'] : ['value'];
         // MTX uses whitespace, not TSV; do not use the generic delimited parser.
-        const parsed = entries.slice(0, LIMITS.rows).map(line => trimWhitespace(line, headers.length));
-        const malformed = parsed.filter(row => row.cells.length !== headers.length || row.extra).length;
+        const rows = [];
+        const truncatedFields = new Map();
+        let malformed = 0;
+        entries.slice(0, LIMITS.rows).forEach((line, index) => {
+            const row = trimWhitespace(line, headers.length, truncatedFields, index);
+            rows.push(row.cells);
+            if (row.cells.length !== headers.length || row.extra) malformed++;
+        });
         const notes = [matrixInfo, isCoordinate
             ? 'Coordinate indices are 1-based; entries are not expanded into a dense matrix'
             : 'Dense array values are shown in storage order; symmetry is not expanded',
             (mark ?? 'No MatrixMarket banner found').slice(0, 140)];
         if (malformed) notes.push(`${malformed} sampled entries have unexpected field counts; extra fields are omitted`);
         return {kind: isArray ? 'Matrix Market array' : 'Matrix Market coordinates', headers,
-            rows: parsed.map(row => row.cells), notes,
-            rowLimit: entries.length > LIMITS.rows, colLimit: false};
+            rows, notes,
+            rowLimit: entries.length > LIMITS.rows || lineLimit,
+            truncatedRows: entries.length > LIMITS.rows || lineLimit,
+            truncatedBytes: partial || lineLimit, incompleteRecord,
+            truncatedFields, clippedFields: truncatedFields.size > 0,
+            truncatedHeader: false, colLimit: false};
     }
     return null;
 }
@@ -448,7 +559,10 @@ var Klass = GObject.registerClass({
     _load() {
         this._file.read_async(GLib.PRIORITY_DEFAULT, this._cancellable, (f, res) => {
             let stream;
-            try { stream = f.read_finish(res); } catch (e) { this._message(e.message); this._readyNow(); return; }
+            try { stream = f.read_finish(res); } catch (e) {
+                if (!this._cancellable.is_cancelled()) { this._message(e.message); this._readyNow(); }
+                return;
+            }
             let count = 0; const chunks = []; let eof = false;
             const binary = this._format === 'h5ad' || this._format === 'parquet';
             const limit = binary ? 64 : LIMITS.bytes;
@@ -466,15 +580,19 @@ var Klass = GObject.registerClass({
                 this._readyNow();
             };
             const next = () => {
-                if (this._cancellable.is_cancelled()) return;
+                if (this._cancellable.is_cancelled()) { try { stream.close(null); } catch (_) {} return; }
                 if (count >= limit) { finish(); return; }
                 stream.read_bytes_async(Math.min(131072, limit - count), GLib.PRIORITY_DEFAULT, this._cancellable,
                     (input, result) => {
                         try {
                             const b = input.read_bytes_finish(result);
+                            if (this._cancellable.is_cancelled()) { try { input.close(null); } catch (_) {} return; }
                             if (!b.get_size()) { eof = true; finish(); return; }
                             const chunk = b.get_data(); chunks.push(chunk); count += chunk.length; next();
-                        } catch (e) { this._message(e.message); this._readyNow(); }
+                        } catch (e) {
+                            try { input.close(null); } catch (_) {}
+                            if (!this._cancellable.is_cancelled()) { this._message(e.message); this._readyNow(); }
+                        }
                     });
             };
             next();
@@ -484,47 +602,57 @@ var Klass = GObject.registerClass({
         const genomic = genomicPreview(this._name, this._text, this._partial);
         this._table = genomic ? {...genomic, truncatedRows: genomic.rowLimit, truncatedBytes: this._partial,
             clippedColumns: genomic.colLimit} : prepareTable(this._text, detectSeparator(this._text, this._name), true, this._partial);
-        this._types = guessTypes(this._table.rows, this._table.headers.length);
+        this._types = guessTypes(this._table.rows, this._table.headers.length, this._table.headers);
         this._draw();
     }
     _draw() {
         const {headers, rows} = this._table;
-        const sampled = this._partial || this._table.truncatedRows || this._table.clippedColumns;
+        const status = previewStatus(this._table);
         const notes = this._table.notes ?? [];
-        const summary = [this._table.kind, notes[0], sampled ? `${rows.length} rows from file prefix` : '']
+        const summary = [this._table.kind, notes[0], status.label]
             .filter(Boolean).join(' · ');
         this._hint.set_text(summary);
-        this._hint.set_tooltip_text([notes.join('\n'), `${rows.length} rows shown from the file prefix`]
+        this._hint.set_tooltip_text([notes.join('\n'), status.tooltip]
             .filter(Boolean).join('\n'));
         this._hint.set_visible(!!summary);
         if (!headers.length) { this._message('No table columns detected'); return; }
         const widths = columnWidthHints(headers, rows, this._types);
         try {
             const store = new Gtk.ListStore();
-            store.set_column_types(headers.map(() => GObject.TYPE_STRING));
+            store.set_column_types([GObject.TYPE_STRING, ...headers.map(() => GObject.TYPE_STRING)]);
             this._store = store;
             const populate = () => {
                 store.clear();
                 const sorted = sortRows(rows, this._sortColumn, this._descending, this._types);
-                sorted.forEach(({cells}) => {
+                this._displayRows = sorted;
+                sorted.forEach(({cells, originalIndex}) => {
                     const iter = store.append();
+                    store.set_value(iter, 0, String(originalIndex + 1));
                     for (let c = 0; c < headers.length; c++)
-                        store.set_value(iter, c, shortText(cells[c]));
+                        store.set_value(iter, c + 1, shortText(cells[c]));
                 });
             };
             populate();
             const view = new Gtk.TreeView({model: store, visible: true,
                 headers_visible: true, enable_search: false,
                 grid_lines: Gtk.TreeViewGridLines.HORIZONTAL});
+            this._view = view;
+            const gutterRenderer = new Gtk.CellRendererText({xalign: 1, xpad: 2, ypad: 3});
+            const gutter = new Gtk.TreeViewColumn({title: '#', resizable: false, sizing: Gtk.TreeViewColumnSizing.FIXED});
+            gutter.pack_start(gutterRenderer, true);
+            gutter.add_attribute(gutterRenderer, 'text', 0);
+            gutter.set_fixed_width(42);
+            view.append_column(gutter);
             for (let col = 0; col < headers.length; col++) {
+                const numeric = this._types[col] === 'number';
                 const renderer = new Gtk.CellRendererText({ellipsize: Pango.EllipsizeMode.END,
-                    xalign: this._types[col] === 'number' ? 1 : 0,
+                    xalign: numeric ? 1 : 0,
                     xpad: 8, ypad: 4});
                 const column = new Gtk.TreeViewColumn({title: String(headers[col]).slice(0, 55),
-                    resizable: true, expand: headers.length <= 10, clickable: true,
+                    resizable: true, expand: !numeric, clickable: true,
                     min_width: Math.min(widths[col], 100)});
                 column.pack_start(renderer, true);
-                column.add_attribute(renderer, 'text', col);
+                column.add_attribute(renderer, 'text', col + 1);
                 column.set_fixed_width(widths[col]);
                 column.connect('clicked', () => {
                     if (this._sortColumn !== col) { this._sortColumn = col; this._descending = false; }
@@ -534,6 +662,61 @@ var Klass = GObject.registerClass({
                 });
                 view.append_column(column);
             }
+            view.connect('button-press-event', (_view, event) => {
+                if (event.button !== Gdk.BUTTON_SECONDARY) return false;
+                const hit = view.get_path_at_pos(Math.floor(event.x), Math.floor(event.y));
+                if (!hit || !hit[0]) return false;
+                const [path, column] = hit;
+                view.get_selection().select_path(path);
+                const row = this._rowAtPath(path);
+                if (!row) return false;
+                const dataColumn = view.get_columns().indexOf(column) - 1;
+                const menu = new Gtk.Menu();
+                if (dataColumn >= 0) {
+                    const area = view.get_cell_area(path, column);
+                    const active = {value: String(row.cells[dataColumn] ?? ''),
+                        cells: row.cells.map(value => String(value ?? '')),
+                        row: row.originalIndex, column: dataColumn,
+                        anchor: {x: area.x, y: area.y, width: area.width, height: area.height}};
+                    for (const [label, callback] of [
+                        ['Copy cell value', () => this._copyText(active.value)],
+                        ['Copy row as TSV', () => this._copyText(rowToTsv(active.cells))],
+                        ['Inspect value', () => this._inspectValue(active)],
+                    ]) {
+                        const item = new Gtk.MenuItem({label});
+                        item.connect('activate', callback);
+                        menu.append(item);
+                    }
+                } else {
+                    const item = new Gtk.MenuItem({label: 'Copy row as TSV'});
+                    item.connect('activate', () => this._copyText(rowToTsv(row.cells)));
+                    menu.append(item);
+                }
+                menu.show_all();
+                menu.popup_at_pointer(event);
+                return true;
+            });
+            view.connect('row-activated', (_view, path, column) => {
+                const dataColumn = view.get_columns().indexOf(column) - 1;
+                const row = this._rowAtPath(path);
+                if (row && dataColumn >= 0) {
+                    const area = view.get_cell_area(path, column);
+                    this._inspectValue({value: String(row.cells[dataColumn] ?? ''),
+                        row: row.originalIndex, column: dataColumn,
+                        anchor: {x: area.x, y: area.y, width: area.width, height: area.height}});
+                }
+            });
+            view.connect('key-press-event', (_view, event) => {
+                if ((event.state & Gdk.ModifierType.CONTROL_MASK) && event.keyval === Gdk.KEY_c) {
+                    const [model, iter] = view.get_selection().get_selected();
+                    if (iter) {
+                        const path = model.get_path(iter);
+                        const row = this._rowAtPath(path);
+                        if (row) { this._copyText(rowToTsv(row.cells)); return true; }
+                    }
+                }
+                return false;
+            });
             if (this._scroll.get_child()) this._scroll.remove(this._scroll.get_child());
             this._scroll.add(view);
             this._scroll.show_all();
@@ -547,6 +730,44 @@ var Klass = GObject.registerClass({
             if (this._scroll.get_child()) this._scroll.remove(this._scroll.get_child());
             this._scroll.add(view); this._scroll.show_all();
         }
+    }
+    _rowAtPath(path) {
+        const index = path.get_indices()[0];
+        return Number.isInteger(index) ? this._displayRows[index] ?? null : null;
+    }
+    _copyText(text) {
+        if (text !== undefined && text !== null)
+            Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(String(text), -1);
+    }
+    _inspectValue(active) {
+        if (!active) return;
+        if (this._inspectPopover) {
+            const previous = this._inspectPopover;
+            this._inspectPopover = null;
+            previous.destroy();
+        }
+        const box = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 6,
+            margin: 8, visible: true});
+        const status = new Gtk.Label({label: cellValueStatus(this._table, active.row, active.column),
+            xalign: 0, wrap: true, visible: true});
+        const buffer = new Gtk.TextBuffer(); buffer.set_text(active.value, -1);
+        const text = new Gtk.TextView({buffer, editable: false, cursor_visible: true,
+            monospace: true, wrap_mode: Gtk.WrapMode.WORD_CHAR, visible: true});
+        const scroll = new Gtk.ScrolledWindow({visible: true, min_content_width: 280,
+            max_content_width: 520, min_content_height: 80, max_content_height: 280});
+        scroll.add(text);
+        const copy = new Gtk.Button({label: 'Copy value', halign: Gtk.Align.END, visible: true});
+        copy.connect('clicked', () => this._copyText(active.value));
+        box.pack_start(status, false, false, 0); box.pack_start(scroll, true, true, 0);
+        box.pack_start(copy, false, false, 0);
+        const popover = Gtk.Popover.new(this._view);
+        popover.add(box); popover.set_pointing_to(new Gdk.Rectangle(active.anchor));
+        this._inspectPopover = popover;
+        popover.connect('closed', () => {
+            if (this._inspectPopover === popover) this._inspectPopover = null;
+            popover.destroy();
+        });
+        popover.show_all(); popover.popup();
     }
 });
 var mimeTypes = [

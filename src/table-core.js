@@ -32,20 +32,30 @@ export function parseDelimited(text, separator, options = {}) {
     let inQuotes = false;
     let clippedColumns = false;
     let clippedFields = false;
+    const clippedFieldColumns = new Map();
+    let fieldClipped = false;
     let hitRowLimit = false;
     let startOfField = true;
 
     const append = ch => {
         if (field.length < fieldChars)
             field += ch;
-        else
+        else {
             clippedFields = true;
+            if (!fieldClipped && fullCols < colLimit) {
+                const columns = clippedFieldColumns.get(rows.length) ?? [];
+                columns.push(fullCols);
+                clippedFieldColumns.set(rows.length, columns);
+            }
+            fieldClipped = true;
+        }
     };
     const flushField = () => {
         if (fullCols < colLimit) row.push(field);
         else clippedColumns = true;
         fullCols++;
         field = '';
+        fieldClipped = false;
         startOfField = true;
     };
     const flushRow = () => {
@@ -89,7 +99,7 @@ export function parseDelimited(text, separator, options = {}) {
     const unfinished = fullCols > 0 || field.length > 0 || !startOfField;
     if (unfinished && rows.length < rowLimit && keepPartial && !inQuotes) flushRow();
     return {
-        rows, widths, clippedColumns, clippedFields, hitRowLimit,
+        rows, widths, clippedColumns, clippedFields, clippedFieldColumns, hitRowLimit,
         droppedPartial: unfinished && !keepPartial,
         unterminatedQuote: inQuotes,
     };
@@ -126,8 +136,12 @@ export function prepareTable(text, separator, hasHeader = true, partialByteRead 
     });
     const all = parsed.rows;
     const originalHeaders = hasHeader ? (all.shift() ?? []) : [];
-    const rows = all.slice(0, LIMITS.rows);
-    const cols = Math.min(LIMITS.columns, Math.max(0, originalHeaders.length, ...rows.map(row => row.length)));
+    const parsedRowCount = all.length;
+    if (all.length > LIMITS.rows) all.length = LIMITS.rows;
+    const rows = all;
+    let cols = originalHeaders.length;
+    for (const row of rows) cols = Math.max(cols, row.length);
+    cols = Math.min(LIMITS.columns, cols);
     const used = new Set();
     const headers = Array.from({length: cols}, (_, i) => {
         const raw = hasHeader ? (originalHeaders[i] ?? '').trim() : '';
@@ -138,12 +152,21 @@ export function prepareTable(text, separator, hasHeader = true, partialByteRead 
         used.add(name);
         return name;
     });
+    const truncatedFields = new Map();
+    rows.forEach((_, index) => {
+        const columns = parsed.clippedFieldColumns.get(index + (hasHeader ? 1 : 0));
+        if (columns) truncatedFields.set(index, columns);
+    });
+    const truncatedHeader = hasHeader && (parsed.clippedFieldColumns.get(0)?.length ?? 0) > 0;
     return {
         headers, rows, separator, hasHeader,
-        truncatedRows: parsed.hitRowLimit || all.length > LIMITS.rows || (partialByteRead && parsed.droppedPartial),
+        truncatedRows: parsed.hitRowLimit || parsedRowCount > LIMITS.rows,
         truncatedBytes: partialByteRead,
-        clippedFields: parsed.clippedFields,
+        clippedFields: truncatedHeader || truncatedFields.size > 0,
+        truncatedHeader,
+        truncatedFields,
         clippedColumns: parsed.clippedColumns,
+        incompleteRecord: partialByteRead && parsed.droppedPartial,
         raggedRows: parsed.widths.filter(w => w !== cols).length,
         quoteWarning: parsed.unterminatedQuote && !partialByteRead,
     };
@@ -152,7 +175,7 @@ export function prepareTable(text, separator, hasHeader = true, partialByteRead 
 export function isMissing(v) {
     if (v === undefined || v === null) return true;
     const s = v.trim();
-    return s === '' || /^(NA|N\/A|NULL|NONE|NAN)$/i.test(s);
+    return s === '' || s === '.' || /^(NA|N\/A|NULL|NONE|NAN)$/i.test(s);
 }
 
 export function numericValue(v) {
@@ -163,21 +186,38 @@ export function numericValue(v) {
     return Number.isFinite(n) ? n : null;
 }
 
-export function compareCells(left, right, type, leftIndex = 0, rightIndex = 0, descending = false) {
+export function compareCells(left, right, type, descending = false) {
     const aMissing = isMissing(left), bMissing = isMissing(right);
-    if (aMissing && bMissing) return leftIndex - rightIndex;
-    if (aMissing) return 1;
-    if (bMissing) return -1;
+    if (aMissing && bMissing) return 0;
+    if (aMissing) return descending ? -1 : 1;
+    if (bMissing) return descending ? 1 : -1;
     let diff;
     if (type === 'number') {
-        const a = numericValue(left), b = numericValue(right);
-        diff = a === null || b === null ? left.localeCompare(right) : a - b;
+        const x = left.trim(), y = right.trim();
+        if (/^[+-]?\d+$/.test(x) && /^[+-]?\d+$/.test(y)) {
+            const a = Number(x), b = Number(y);
+            if (Number.isSafeInteger(a) && Number.isSafeInteger(b))
+                diff = a < b ? -1 : a > b ? 1 : 0;
+            else {
+                const exactA = BigInt(x), exactB = BigInt(y);
+                diff = exactA < exactB ? -1 : exactA > exactB ? 1 : 0;
+            }
+        } else {
+            // shortcut: decimal comparison uses JS Number precision, upgrade if exact decimal ordering is required.
+            const a = numericValue(x), b = numericValue(y);
+            diff = a === null ? (b === null ? x.localeCompare(y) : 1)
+                : b === null ? -1 : a < b ? -1 : a > b ? 1 : 0;
+        }
     } else diff = left.localeCompare(right, undefined, {numeric: true});
-    return diff === 0 ? leftIndex - rightIndex : (descending ? -diff : diff);
+    return descending ? -diff : diff;
 }
 
-export function guessTypes(rows, count) {
+export function guessTypes(rows, count, headers = []) {
     return Array.from({length: count}, (_, col) => {
+        const header = headers[col] ?? '';
+        if (/^(?:#?chrom(?:osome)?|chr|seqid|gene|sample|cell|barcode|accession|name|id|contig)$/i.test(header) ||
+            /_(?:id|name|barcode|accession)$/i.test(header))
+            return 'text';
         let present = 0;
         let numeric = 0;
         for (const row of rows.slice(0, 500)) {
@@ -194,7 +234,7 @@ export function sortRows(rows, sortColumn, descending, types) {
     const sorted = rows.map((cells, originalIndex) => ({cells, originalIndex}));
     if (sortColumn !== null && sortColumn >= 0)
         sorted.sort((a, b) => compareCells(a.cells[sortColumn] ?? '', b.cells[sortColumn] ?? '',
-            types[sortColumn], a.originalIndex, b.originalIndex, descending));
+            types[sortColumn], descending));
     return sorted;
 }
 
@@ -203,14 +243,43 @@ export function sortRows(rows, sortColumn, descending, types) {
  */
 export function columnWidthHints(headers, rows, types = []) {
     return headers.map((header, col) => {
-        let longest = Math.min(40, String(header).length);
+        const numeric = types[col] === 'number';
+        let longest = Math.min(numeric ? 28 : 32, String(header).length);
         // Scan no more than 64 sample rows; do not infer widths from entire files.
         for (const row of rows.slice(0, 64)) {
             const length = String(row[col] ?? '').replace(/[\r\n\t]/g, ' ').length;
-            longest = Math.max(longest, Math.min(length, 40));
+            longest = Math.max(longest, Math.min(length, numeric ? 20 : 32));
         }
-        // Numeric values tend to require narrower cells. Keep a readable header.
-        const minimum = types[col] === 'number' ? 84 : 94;
-        return Math.max(minimum, Math.min(280, Math.round(longest * 7.4 + 24)));
+        const minimum = numeric ? 64 : 88;
+        const maximum = numeric ? 220 : 280;
+        return Math.max(minimum, Math.min(maximum, Math.round(longest * 7.2 + 24)));
     });
+}
+
+export function rowToTsv(cells) {
+    return cells.map(value => {
+        const text = String(value ?? '');
+        return /[\t"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join('\t');
+}
+
+export function cellValueStatus(table, row, column) {
+    if (table.truncatedFields?.get(row)?.includes(column))
+        return `Field truncated to ${LIMITS.fieldChars} characters by the preview.`;
+    if (table.incompleteRecord)
+        return 'The file prefix ended inside a record; the trailing partial record was omitted.';
+    return 'Complete field retained within the sampled input.';
+}
+
+export function previewStatus(table) {
+    const messages = [];
+    if (table.truncatedBytes) messages.push('Read only a bounded file prefix.');
+    if (table.incompleteRecord) messages.push('A trailing partial record was omitted.');
+    if (table.truncatedRows) messages.push(`${table.rows.length} rows shown from the file prefix; more rows may be present.`);
+    if (table.clippedColumns) messages.push(`Only the first ${LIMITS.columns} columns are shown.`);
+    if (table.truncatedHeader) messages.push('One or more header fields were truncated.');
+    if (table.clippedFields) messages.push(`One or more fields are limited to ${LIMITS.fieldChars} characters.`);
+    if (table.quoteWarning) messages.push('An unterminated quoted field prevented the final record from being parsed.');
+    if (table.truncatedFields?.size) messages.push('Double-click a cell to inspect its retained value and truncation status.');
+    return {label: messages.length ? 'Preview limited' : '', tooltip: messages.join('\n')};
 }

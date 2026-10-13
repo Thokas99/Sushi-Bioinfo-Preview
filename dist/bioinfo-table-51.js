@@ -5,6 +5,7 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
+import Graphene from 'gi://Graphene';
 import Pango from 'gi://Pango';
 import {Renderer, ResizePolicy} from 'resource://org/gnome/NautilusPreviewer/plugin-api-1.js';
 /* SPDX-License-Identifier: MIT
@@ -41,20 +42,30 @@ function parseDelimited(text, separator, options = {}) {
     let inQuotes = false;
     let clippedColumns = false;
     let clippedFields = false;
+    const clippedFieldColumns = new Map();
+    let fieldClipped = false;
     let hitRowLimit = false;
     let startOfField = true;
 
     const append = ch => {
         if (field.length < fieldChars)
             field += ch;
-        else
+        else {
             clippedFields = true;
+            if (!fieldClipped && fullCols < colLimit) {
+                const columns = clippedFieldColumns.get(rows.length) ?? [];
+                columns.push(fullCols);
+                clippedFieldColumns.set(rows.length, columns);
+            }
+            fieldClipped = true;
+        }
     };
     const flushField = () => {
         if (fullCols < colLimit) row.push(field);
         else clippedColumns = true;
         fullCols++;
         field = '';
+        fieldClipped = false;
         startOfField = true;
     };
     const flushRow = () => {
@@ -98,7 +109,7 @@ function parseDelimited(text, separator, options = {}) {
     const unfinished = fullCols > 0 || field.length > 0 || !startOfField;
     if (unfinished && rows.length < rowLimit && keepPartial && !inQuotes) flushRow();
     return {
-        rows, widths, clippedColumns, clippedFields, hitRowLimit,
+        rows, widths, clippedColumns, clippedFields, clippedFieldColumns, hitRowLimit,
         droppedPartial: unfinished && !keepPartial,
         unterminatedQuote: inQuotes,
     };
@@ -135,8 +146,12 @@ function prepareTable(text, separator, hasHeader = true, partialByteRead = false
     });
     const all = parsed.rows;
     const originalHeaders = hasHeader ? (all.shift() ?? []) : [];
-    const rows = all.slice(0, LIMITS.rows);
-    const cols = Math.min(LIMITS.columns, Math.max(0, originalHeaders.length, ...rows.map(row => row.length)));
+    const parsedRowCount = all.length;
+    if (all.length > LIMITS.rows) all.length = LIMITS.rows;
+    const rows = all;
+    let cols = originalHeaders.length;
+    for (const row of rows) cols = Math.max(cols, row.length);
+    cols = Math.min(LIMITS.columns, cols);
     const used = new Set();
     const headers = Array.from({length: cols}, (_, i) => {
         const raw = hasHeader ? (originalHeaders[i] ?? '').trim() : '';
@@ -147,12 +162,21 @@ function prepareTable(text, separator, hasHeader = true, partialByteRead = false
         used.add(name);
         return name;
     });
+    const truncatedFields = new Map();
+    rows.forEach((_, index) => {
+        const columns = parsed.clippedFieldColumns.get(index + (hasHeader ? 1 : 0));
+        if (columns) truncatedFields.set(index, columns);
+    });
+    const truncatedHeader = hasHeader && (parsed.clippedFieldColumns.get(0)?.length ?? 0) > 0;
     return {
         headers, rows, separator, hasHeader,
-        truncatedRows: parsed.hitRowLimit || all.length > LIMITS.rows || (partialByteRead && parsed.droppedPartial),
+        truncatedRows: parsed.hitRowLimit || parsedRowCount > LIMITS.rows,
         truncatedBytes: partialByteRead,
-        clippedFields: parsed.clippedFields,
+        clippedFields: truncatedHeader || truncatedFields.size > 0,
+        truncatedHeader,
+        truncatedFields,
         clippedColumns: parsed.clippedColumns,
+        incompleteRecord: partialByteRead && parsed.droppedPartial,
         raggedRows: parsed.widths.filter(w => w !== cols).length,
         quoteWarning: parsed.unterminatedQuote && !partialByteRead,
     };
@@ -161,7 +185,7 @@ function prepareTable(text, separator, hasHeader = true, partialByteRead = false
 function isMissing(v) {
     if (v === undefined || v === null) return true;
     const s = v.trim();
-    return s === '' || /^(NA|N\/A|NULL|NONE|NAN)$/i.test(s);
+    return s === '' || s === '.' || /^(NA|N\/A|NULL|NONE|NAN)$/i.test(s);
 }
 
 function numericValue(v) {
@@ -172,21 +196,38 @@ function numericValue(v) {
     return Number.isFinite(n) ? n : null;
 }
 
-function compareCells(left, right, type, leftIndex = 0, rightIndex = 0, descending = false) {
+function compareCells(left, right, type, descending = false) {
     const aMissing = isMissing(left), bMissing = isMissing(right);
-    if (aMissing && bMissing) return leftIndex - rightIndex;
-    if (aMissing) return 1;
-    if (bMissing) return -1;
+    if (aMissing && bMissing) return 0;
+    if (aMissing) return descending ? -1 : 1;
+    if (bMissing) return descending ? 1 : -1;
     let diff;
     if (type === 'number') {
-        const a = numericValue(left), b = numericValue(right);
-        diff = a === null || b === null ? left.localeCompare(right) : a - b;
+        const x = left.trim(), y = right.trim();
+        if (/^[+-]?\d+$/.test(x) && /^[+-]?\d+$/.test(y)) {
+            const a = Number(x), b = Number(y);
+            if (Number.isSafeInteger(a) && Number.isSafeInteger(b))
+                diff = a < b ? -1 : a > b ? 1 : 0;
+            else {
+                const exactA = BigInt(x), exactB = BigInt(y);
+                diff = exactA < exactB ? -1 : exactA > exactB ? 1 : 0;
+            }
+        } else {
+            // shortcut: decimal comparison uses JS Number precision, upgrade if exact decimal ordering is required.
+            const a = numericValue(x), b = numericValue(y);
+            diff = a === null ? (b === null ? x.localeCompare(y) : 1)
+                : b === null ? -1 : a < b ? -1 : a > b ? 1 : 0;
+        }
     } else diff = left.localeCompare(right, undefined, {numeric: true});
-    return diff === 0 ? leftIndex - rightIndex : (descending ? -diff : diff);
+    return descending ? -diff : diff;
 }
 
-function guessTypes(rows, count) {
+function guessTypes(rows, count, headers = []) {
     return Array.from({length: count}, (_, col) => {
+        const header = headers[col] ?? '';
+        if (/^(?:#?chrom(?:osome)?|chr|seqid|gene|sample|cell|barcode|accession|name|id|contig)$/i.test(header) ||
+            /_(?:id|name|barcode|accession)$/i.test(header))
+            return 'text';
         let present = 0;
         let numeric = 0;
         for (const row of rows.slice(0, 500)) {
@@ -203,7 +244,7 @@ function sortRows(rows, sortColumn, descending, types) {
     const sorted = rows.map((cells, originalIndex) => ({cells, originalIndex}));
     if (sortColumn !== null && sortColumn >= 0)
         sorted.sort((a, b) => compareCells(a.cells[sortColumn] ?? '', b.cells[sortColumn] ?? '',
-            types[sortColumn], a.originalIndex, b.originalIndex, descending));
+            types[sortColumn], descending));
     return sorted;
 }
 
@@ -212,16 +253,45 @@ function sortRows(rows, sortColumn, descending, types) {
  */
 function columnWidthHints(headers, rows, types = []) {
     return headers.map((header, col) => {
-        let longest = Math.min(40, String(header).length);
+        const numeric = types[col] === 'number';
+        let longest = Math.min(numeric ? 28 : 32, String(header).length);
         // Scan no more than 64 sample rows; do not infer widths from entire files.
         for (const row of rows.slice(0, 64)) {
             const length = String(row[col] ?? '').replace(/[\r\n\t]/g, ' ').length;
-            longest = Math.max(longest, Math.min(length, 40));
+            longest = Math.max(longest, Math.min(length, numeric ? 20 : 32));
         }
-        // Numeric values tend to require narrower cells. Keep a readable header.
-        const minimum = types[col] === 'number' ? 84 : 94;
-        return Math.max(minimum, Math.min(280, Math.round(longest * 7.4 + 24)));
+        const minimum = numeric ? 64 : 88;
+        const maximum = numeric ? 220 : 280;
+        return Math.max(minimum, Math.min(maximum, Math.round(longest * 7.2 + 24)));
     });
+}
+
+function rowToTsv(cells) {
+    return cells.map(value => {
+        const text = String(value ?? '');
+        return /[\t"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join('\t');
+}
+
+function cellValueStatus(table, row, column) {
+    if (table.truncatedFields?.get(row)?.includes(column))
+        return `Field truncated to ${LIMITS.fieldChars} characters by the preview.`;
+    if (table.incompleteRecord)
+        return 'The file prefix ended inside a record; the trailing partial record was omitted.';
+    return 'Complete field retained within the sampled input.';
+}
+
+function previewStatus(table) {
+    const messages = [];
+    if (table.truncatedBytes) messages.push('Read only a bounded file prefix.');
+    if (table.incompleteRecord) messages.push('A trailing partial record was omitted.');
+    if (table.truncatedRows) messages.push(`${table.rows.length} rows shown from the file prefix; more rows may be present.`);
+    if (table.clippedColumns) messages.push(`Only the first ${LIMITS.columns} columns are shown.`);
+    if (table.truncatedHeader) messages.push('One or more header fields were truncated.');
+    if (table.clippedFields) messages.push(`One or more fields are limited to ${LIMITS.fieldChars} characters.`);
+    if (table.quoteWarning) messages.push('An unterminated quoted field prevented the final record from being parsed.');
+    if (table.truncatedFields?.size) messages.push('Double-click a cell to inspect its retained value and truncation status.');
+    return {label: messages.length ? 'Preview limited' : '', tooltip: messages.join('\n')};
 }
 
 
@@ -264,6 +334,7 @@ function splitLines(text, partial) {
     const maxLines = LIMITS.rows + 8192;
     const lines = [];
     let cursor = text.charCodeAt(0) === 0xFEFF ? 1 : 0;
+    let incompleteRecord = false;
     while (cursor < text.length && lines.length < maxLines) {
         const lf = text.indexOf('\n', cursor);
         const cr = text.indexOf('\r', cursor);
@@ -273,19 +344,21 @@ function splitLines(text, partial) {
         else end = Math.min(lf, cr);
         if (end === -1) {
             if (!partial) lines.push(text.slice(cursor));
+            else incompleteRecord = cursor < text.length;
+            cursor = text.length;
             break;
         }
         lines.push(text.slice(cursor, end));
         cursor = end + (text[end] === '\r' && text[end + 1] === '\n' ? 2 : 1);
     }
-    return lines;
+    return {lines, incompleteRecord, lineLimit: cursor < text.length};
 }
 
 function cleanRows(lines, skip, maxRows) {
     return lines.filter(s => s.trim() && !skip(s)).slice(0, maxRows);
 }
 
-function trimDelimited(line, cols) {
+function trimDelimited(line, cols, clippedFields = null, rowIndex = 0) {
     // Extract only the columns we display; never split a huge row into
     // arbitrarily many temporary strings.
     const cells = [];
@@ -293,6 +366,11 @@ function trimDelimited(line, cols) {
     while (cells.length < cols) {
         const next = line.indexOf('\t', pos);
         const end = next === -1 ? line.length : next;
+        if (end - pos > LIMITS.fieldChars && clippedFields) {
+            const columns = clippedFields.get(rowIndex) ?? [];
+            columns.push(cells.length);
+            clippedFields.set(rowIndex, columns);
+        }
         cells.push(line.slice(pos, Math.min(end, pos + LIMITS.fieldChars)));
         if (next === -1) break;
         pos = next + 1;
@@ -310,7 +388,7 @@ function exceedsColumns(line, max) {
     return true;
 }
 
-function trimWhitespace(line, columns) {
+function trimWhitespace(line, columns, clippedFields = null, rowIndex = 0) {
     const cells = [];
     let cursor = 0;
     while (cells.length < columns) {
@@ -318,6 +396,11 @@ function trimWhitespace(line, columns) {
         if (cursor === line.length) break;
         let end = cursor;
         while (end < line.length && !/\s/.test(line[end])) end++;
+        if (end - cursor > LIMITS.fieldChars && clippedFields) {
+            const clipped = clippedFields.get(rowIndex) ?? [];
+            clipped.push(cells.length);
+            clippedFields.set(rowIndex, clipped);
+        }
         cells.push(line.slice(cursor, Math.min(end, cursor + LIMITS.fieldChars)));
         cursor = end;
     }
@@ -325,37 +408,50 @@ function trimWhitespace(line, columns) {
     return {cells, extra: cursor < line.length};
 }
 
-function result(kind, headers, lines, columns, notes) {
-    const rows = lines.slice(0, LIMITS.rows).map(line => trimDelimited(line, columns));
-    const nc = Math.min(LIMITS.columns, kind === 'BED intervals'
-        ? Math.max(3, ...rows.map(r => r.length), 0)
-        : Math.max(headers.length, ...rows.map(r => r.length), 0));
+function result(kind, headers, lines, columns, notes, incompleteRecord = false, lineLimit = false, partial = false) {
+    const rows = [];
+    const truncatedFields = new Map();
+    for (let index = 0; index < Math.min(lines.length, LIMITS.rows); index++)
+        rows.push(trimDelimited(lines[index], columns, truncatedFields, index));
+    let nc = kind === 'BED intervals' ? 3 : headers.length;
+    for (const row of rows) nc = Math.max(nc, row.length);
+    nc = Math.min(LIMITS.columns, nc);
     const names = Array.from({length: nc}, (_, i) => headers[i] || `Column ${i + 1}`);
-    return {kind, headers: names, rows, notes,
-        rowLimit: lines.length > LIMITS.rows,
+    return {kind, headers: names, rows, notes, truncatedFields,
+        clippedFields: truncatedFields.size > 0, truncatedHeader: false,
+        incompleteRecord, truncatedBytes: partial || lineLimit,
+        truncatedRows: lines.length > LIMITS.rows || lineLimit,
+        rowLimit: lines.length > LIMITS.rows || lineLimit,
         colLimit: headers.length > LIMITS.columns || lines.some(line => exceedsColumns(line, LIMITS.columns))};
 }
 
 function genomicPreview(name, text, partial) {
     const kind = formatFromName(name);
-    const lines = splitLines(text, partial);
+    const split = splitLines(text, partial);
+    const {lines, incompleteRecord, lineLimit} = split;
     if (kind === 'vcf') {
         const meta = lines.filter(line => line.startsWith('##'));
         const headerLine = lines.find(line => line.startsWith('#CHROM\t'));
-        const headers = headerLine ? trimDelimited(headerLine.slice(1), LIMITS.columns + 1) :
+        const headerClips = new Map();
+        const headers = headerLine ? trimDelimited(headerLine.slice(1), LIMITS.columns + 1, headerClips) :
             ['CHROM','POS','ID','REF','ALT','QUAL','FILTER','INFO','FORMAT'];
         const records = cleanRows(lines, x => x.startsWith('#'), LIMITS.rows + 1);
         const samples = Math.max(0, headers.length - 9);
-        return result('VCF variants', headers, records, LIMITS.columns,
+        const preview = result('VCF variants', headers, records, LIMITS.columns,
             ['POS uses 1-based coordinates', 'INFO/FORMAT displayed as text; no genotype interpretation',
-                `${samples} sample columns in header`, `${meta.length} header metadata lines in sample`]);
+                `${samples} sample columns in header`, `${meta.length} header metadata lines in sample`],
+            incompleteRecord, lineLimit, partial);
+        preview.truncatedHeader = headerClips.has(0);
+        preview.clippedFields ||= preview.truncatedHeader;
+        return preview;
     }
     if (kind === 'bed') {
         const headers = ['chrom','chromStart','chromEnd','name','score','strand',
             'thickStart','thickEnd','itemRgb','blockCount','blockSizes','blockStarts'];
         const records = cleanRows(lines, x => /^(#|track\b|browser\b)/i.test(x), LIMITS.rows + 1);
         return result('BED intervals', headers, records, LIMITS.columns,
-            ['BED starts are 0-based; ends are exclusive', 'Columns are positional; additional columns are generic']);
+            ['BED starts are 0-based; ends are exclusive', 'Columns are positional; additional columns are generic'],
+            incompleteRecord, lineLimit, partial);
     }
     if (kind === 'gff') {
         const headers = ['seqid','source','type','start','end','score','strand','phase','attributes'];
@@ -363,7 +459,8 @@ function genomicPreview(name, text, partial) {
         const annotationLines = fastaStart >= 0 ? lines.slice(0, fastaStart) : lines;
         const records = cleanRows(annotationLines, x => x.startsWith('#'), LIMITS.rows + 1);
         return result('GFF / GTF features', headers, records, LIMITS.columns,
-            ['GFF/GTF starts and ends are 1-based inclusive', 'Attributes are not expanded']);
+            ['GFF/GTF starts and ends are 1-based inclusive', 'Attributes are not expanded'],
+            incompleteRecord, lineLimit, partial);
     }
     if (kind === 'mtx') {
         const mark = lines.find(x => /^%%MatrixMarket\s/i.test(x));
@@ -373,10 +470,15 @@ function genomicPreview(name, text, partial) {
         const field = banner?.[2].toLowerCase();
         if (!banner || (storage === 'array' && field === 'pattern')) {
             const raw = content.slice(0, LIMITS.rows);
+            const clippedRows = new Map();
+            raw.forEach((line, index) => { if (line.length > LIMITS.fieldChars) clippedRows.set(index, [0]); });
             return {kind: 'Matrix Market text', headers: ['line'], rows: raw.map(line => [line.slice(0, LIMITS.fieldChars)]),
                 notes: ['Unsupported or invalid Matrix Market banner; non-comment lines are shown as text',
                     (mark ?? 'No MatrixMarket banner found').slice(0, 140)],
-                rowLimit: content.length > LIMITS.rows, colLimit: false};
+                rowLimit: content.length > LIMITS.rows, truncatedRows: content.length > LIMITS.rows || lineLimit,
+                truncatedBytes: partial || lineLimit, incompleteRecord,
+                truncatedFields: clippedRows, clippedFields: clippedRows.size > 0,
+                truncatedHeader: false, colLimit: false};
         }
         const dimensionCount = storage === 'coordinate' ? 3 : 2;
         const dimensionRow = trimWhitespace(content[0] ?? '', dimensionCount + 1);
@@ -395,16 +497,26 @@ function genomicPreview(name, text, partial) {
                 : field === 'complex' ? ['row','column','real','imaginary'] : ['row','column','value'])
             : field === 'complex' ? ['real','imaginary'] : ['value'];
         // MTX uses whitespace, not TSV; do not use the generic delimited parser.
-        const parsed = entries.slice(0, LIMITS.rows).map(line => trimWhitespace(line, headers.length));
-        const malformed = parsed.filter(row => row.cells.length !== headers.length || row.extra).length;
+        const rows = [];
+        const truncatedFields = new Map();
+        let malformed = 0;
+        entries.slice(0, LIMITS.rows).forEach((line, index) => {
+            const row = trimWhitespace(line, headers.length, truncatedFields, index);
+            rows.push(row.cells);
+            if (row.cells.length !== headers.length || row.extra) malformed++;
+        });
         const notes = [matrixInfo, isCoordinate
             ? 'Coordinate indices are 1-based; entries are not expanded into a dense matrix'
             : 'Dense array values are shown in storage order; symmetry is not expanded',
             (mark ?? 'No MatrixMarket banner found').slice(0, 140)];
         if (malformed) notes.push(`${malformed} sampled entries have unexpected field counts; extra fields are omitted`);
         return {kind: isArray ? 'Matrix Market array' : 'Matrix Market coordinates', headers,
-            rows: parsed.map(row => row.cells), notes,
-            rowLimit: entries.length > LIMITS.rows, colLimit: false};
+            rows, notes,
+            rowLimit: entries.length > LIMITS.rows || lineLimit,
+            truncatedRows: entries.length > LIMITS.rows || lineLimit,
+            truncatedBytes: partial || lineLimit, incompleteRecord,
+            truncatedFields, clippedFields: truncatedFields.size > 0,
+            truncatedHeader: false, colLimit: false};
     }
     return null;
 }
@@ -417,6 +529,7 @@ try {
     const css = new Gtk.CssProvider();
     css.load_from_data(`
         .bioinfo-table label { padding: 5px 8px; }
+        .bioinfo-table .row-number { padding: 2px 3px; }
         .bioinfo-table .numeric { font-feature-settings: "tnum"; }
         .bioinfo-table columnview { border: none; }
         .bioinfo-table .dim-label { font-size: 11px; }
@@ -427,10 +540,10 @@ try {
 
 // Rows are GObjects because Gio.ListStore and Gtk.ColumnView expect a GListModel.
 const TableItem = GObject.registerClass(class TableItem extends GObject.Object {
-    constructor(cells, index) {
+    constructor(cells, recordIndex) {
         super();
         this.cells = cells;
-        this.index = index;
+        this.recordIndex = recordIndex;
     }
 });
 
@@ -470,7 +583,16 @@ export const Klass = class LabTable extends Adw.Bin {
     }
     get resizePolicy() { return ResizePolicy.NAT_SIZE; }
     get topBarStyle() { return Adw.ToolbarStyle.FLAT; }
-    cleanup() { this._table = null; this._types = null; this._store = null; this._scroll.set_child(null); }
+    cleanup() {
+        this.cancellable.cancel();
+        const menu = this._menuPopover; this._menuPopover = null;
+        const inspect = this._inspectPopover; this._inspectPopover = null;
+        menu?.popdown(); menu?.unparent();
+        inspect?.popdown(); inspect?.unparent();
+        this._activeCell = null; this._table = null; this._types = null; this._store = null;
+        this._view = null;
+        this._scroll.set_child(null);
+    }
 
     _makeUI() {
         const root = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 0,
@@ -511,20 +633,19 @@ export const Klass = class LabTable extends Adw.Bin {
                 ...genomic, truncatedRows: genomic.rowLimit, truncatedBytes: partial,
                 clippedColumns: genomic.colLimit,
             } : prepareTable(text, detectSeparator(text, this._name), true, partial);
-            this._types = guessTypes(this._table.rows, this._table.headers.length);
+            this._types = guessTypes(this._table.rows, this._table.headers.length, this._table.headers);
             this._renderTable();
         }
         this.markReady();
     }
     _renderTable() {
         const {headers, rows} = this._table;
-        const sampled = this._table.truncatedRows || this._table.truncatedBytes ||
-            this._table.clippedColumns;
+        const status = previewStatus(this._table);
         const notes = this._table.notes ?? [];
-        const summary = [this._table.kind, notes[0], sampled ? `${rows.length} rows from file prefix` : '']
+        const summary = [this._table.kind, notes[0], status.label]
             .filter(Boolean).join(' · ');
         this._hint.set_label(summary);
-        this._hint.set_tooltip_text([notes.join('\n'), `${rows.length} rows shown from the file prefix`]
+        this._hint.set_tooltip_text([notes.join('\n'), status.tooltip]
             .filter(Boolean).join('\n'));
         this._hint.set_visible(!!summary);
         if (headers.length === 0) {
@@ -537,11 +658,50 @@ export const Klass = class LabTable extends Adw.Bin {
             const view = new Gtk.ColumnView({show_row_separators: true,
                 show_column_separators: false, reorderable: false,
                 hexpand: true, vexpand: true});
+            this._view = view;
             view.add_css_class('data-table');
             const sorting = new Gtk.SortListModel({model: store, sorter: view.get_sorter(), incremental: true});
             const selection = new Gtk.SingleSelection({model: sorting,
                 autoselect: false, can_unselect: true});
             view.set_model(selection);
+
+            const menuModel = new Gio.Menu();
+            menuModel.append('Copy cell value', 'table.copy-cell');
+            menuModel.append('Copy row as TSV', 'table.copy-row');
+            menuModel.append('Inspect value', 'table.inspect');
+            const actions = new Gio.SimpleActionGroup();
+            for (const [name, callback] of [
+                ['copy-cell', () => this._copyText(this._activeCell?.value)],
+                ['copy-row', () => this._copyText(this._activeCell && rowToTsv(this._activeCell.cells))],
+                ['inspect', () => this._inspectValue(this._activeCell)],
+            ]) {
+                const action = new Gio.SimpleAction({name});
+                action.connect('activate', callback);
+                actions.add_action(action);
+            }
+            view.insert_action_group('table', actions);
+            const menuPopover = Gtk.PopoverMenu.new_from_model(menuModel);
+            menuPopover.set_parent(view);
+            menuPopover.connect('closed', () => { this._activeCell = null; });
+            this._menuPopover = menuPopover;
+
+            const keys = new Gtk.EventControllerKey();
+            keys.connect('key-pressed', (_controller, keyval, _keycode, state) => {
+                const control = (state & Gdk.ModifierType.CONTROL_MASK) !== 0;
+                const item = selection.get_selected_item();
+                if (control && keyval === Gdk.KEY_c && item) {
+                    this._copyText(rowToTsv(item.cells));
+                    return true;
+                }
+                return false;
+            });
+            view.add_controller(keys);
+
+            const showAt = (popover, point) => {
+                const anchor = new Graphene.Point(point ?? {x: 0, y: 0});
+                popover.set_pointing_to(new Gdk.Rectangle({x: anchor.x, y: anchor.y, width: 1, height: 1}));
+                popover.popup();
+            };
 
             headers.forEach((header, col) => {
                 const factory = new Gtk.SignalListItemFactory();
@@ -551,6 +711,25 @@ export const Klass = class LabTable extends Adw.Bin {
                         halign: Gtk.Align.FILL, hexpand: true,
                         ellipsize: Pango.EllipsizeMode.END, single_line_mode: true});
                     if (numeric) widget.add_css_class('numeric');
+                    const click = new Gtk.GestureClick({button: 0});
+                    widget.add_controller(click);
+                    click.connect('pressed', (gesture, presses, x, y) => {
+                        const current = item.get_item();
+                        const position = item.get_position();
+                        if (!current || position < 0) return;
+                        const [ok, point] = widget.compute_point(view, new Graphene.Point({x, y}));
+                        const anchor = ok ? {x: point.x, y: point.y} : {x: 0, y: 0};
+                        const cells = current.cells.map(value => String(value ?? ''));
+                        const active = {value: cells[col] ?? '', cells,
+                            row: current.recordIndex, column: col, anchor};
+                        if (gesture.get_current_button() === Gdk.BUTTON_SECONDARY) {
+                            this._activeCell = active;
+                            selection.set_selected(position);
+                            showAt(menuPopover, anchor);
+                        } else if (gesture.get_current_button() === Gdk.BUTTON_PRIMARY && presses === 2) {
+                            this._inspectValue(active);
+                        }
+                    });
                     item.set_child(widget);
                 });
                 factory.connect('bind', (_factory, item) => {
@@ -563,12 +742,25 @@ export const Klass = class LabTable extends Adw.Bin {
                     item.get_child().set_tooltip_text(null);
                 });
                 const column = new Gtk.ColumnViewColumn({title: String(header).slice(0, 55),
-                    factory, resizable: true, expand: headers.length <= 10});
+                    factory, resizable: true, expand: !numeric});
                 column.set_fixed_width(widths[col]);
                 column.set_sorter(Gtk.CustomSorter.new((a, b) => compareCells(
-                    a.cells[col] ?? '', b.cells[col] ?? '', this._types[col], a.index, b.index)));
+                    a.cells[col] ?? '', b.cells[col] ?? '', this._types[col])));
                 view.append_column(column);
             });
+            const gutterFactory = new Gtk.SignalListItemFactory();
+            gutterFactory.connect('setup', (_factory, item) => {
+                const label = new Gtk.Label({xalign: 1, halign: Gtk.Align.FILL, width_chars: 3});
+                label.add_css_class('dim-label');
+                label.add_css_class('row-number');
+                item.set_child(label);
+            });
+            gutterFactory.connect('bind', (_factory, item) => {
+                item.get_child().set_label(String(item.get_item().recordIndex + 1));
+            });
+            const gutter = new Gtk.ColumnViewColumn({title: '#', factory: gutterFactory, resizable: false});
+            gutter.set_fixed_width(42);
+            view.insert_column(0, gutter);
             this._store = store;
             this._scroll.set_child(view);
         } catch (e) {
@@ -580,6 +772,48 @@ export const Klass = class LabTable extends Adw.Bin {
             this._scroll.set_child(new Gtk.TextView({buffer, editable: false,
                 monospace: true, wrap_mode: Gtk.WrapMode.NONE}));
         }
+    }
+    _copyText(text) {
+        if (text === undefined || text === null) return;
+        this.get_display().get_clipboard().set_content(Gdk.ContentProvider.new_for_value(String(text)));
+    }
+    _inspectValue(active) {
+        if (!active) return;
+        if (this._inspectPopover) {
+            const previous = this._inspectPopover;
+            this._inspectPopover = null;
+            previous.popdown();
+            previous.unparent();
+        }
+        const buffer = new Gtk.TextBuffer();
+        buffer.set_text(active.value, -1);
+        const text = new Gtk.TextView({buffer, editable: false, cursor_visible: true,
+            monospace: true, wrap_mode: Gtk.WrapMode.WORD_CHAR,
+            left_margin: 8, right_margin: 8, top_margin: 6, bottom_margin: 6});
+        const scroll = new Gtk.ScrolledWindow({max_content_width: 520, max_content_height: 280,
+            hscrollbar_policy: Gtk.PolicyType.AUTOMATIC, vscrollbar_policy: Gtk.PolicyType.AUTOMATIC});
+        scroll.set_child(text);
+        const box = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 6, margin_top: 8,
+            margin_bottom: 8, margin_start: 8, margin_end: 8});
+        const status = new Gtk.Label({label: cellValueStatus(this._table, active.row, active.column),
+            xalign: 0, wrap: true});
+        status.add_css_class('dim-label');
+        const copy = new Gtk.Button({label: 'Copy value', halign: Gtk.Align.END});
+        copy.connect('clicked', () => this._copyText(active.value));
+        box.append(status); box.append(scroll); box.append(copy);
+        const popover = new Gtk.Popover({autohide: true});
+        popover.set_child(box);
+        popover.set_parent(this._view);
+        popover.connect('closed', () => {
+            if (this._inspectPopover === popover) {
+                this._inspectPopover = null;
+                popover.unparent();
+            }
+        });
+        this._inspectPopover = popover;
+        const anchor = new Graphene.Point(active.anchor ?? {x: 0, y: 0});
+        popover.set_pointing_to(new Gdk.Rectangle({x: anchor.x, y: anchor.y, width: 1, height: 1}));
+        popover.popup();
     }
 };
 function formatSize(n) {

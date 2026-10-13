@@ -25,13 +25,17 @@ const hints = columnWidthHints(
     ['text', 'number', 'number']);
 assert.equal(hints.length, 3);
 assert.ok(hints[1] >= hints[2], 'longer header should get more space');
-assert.ok(hints.every(x => x >= 84 && x <= 280));
+assert.ok(hints.every(x => x >= 64 && x <= 280));
+assert.ok(hints[2] < 84, 'short numeric columns should stay compact');
+assert.ok(columnWidthHints(['log2FoldChange'], [['1.42']], ['number'])[0] > hints[2],
+    'numeric widths must still accommodate longer headers');
 const longValue = columnWidthHints(['comment'], [['x'.repeat(10_000)]], ['text']);
-assert.deepEqual(longValue, [280], 'individual long strings must not make huge columns');
+assert.ok(longValue[0] <= 280 && longValue[0] > 200,
+    'individual long strings must not make huge columns');
 for (const name of ['office-51.js', 'office-50.template.js', 'document-51.js', 'document-50.template.js']) {
     const source = readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8');
     assert.match(source, /min_content_width: 920, min_content_height: 560/);
 }
 const mime = readFileSync(new URL('../mime/sushi-bioinfo-preview.xml', import.meta.url), 'utf8');
 assert.ok(!mime.includes('application/x-sushi-bgzf'));
-console.log('Native scrolling, responsive column sizing and bounded layout confirmed.');
+console.log('Native scrolling, compact column sizing and bounded layout confirmed.');

@@ -5,6 +5,7 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
+import Graphene from 'gi://Graphene';
 import Pango from 'gi://Pango';
 import {Renderer, ResizePolicy} from 'resource://org/gnome/NautilusPreviewer/plugin-api-1.js';
 /* EMBED_CORE_HERE */
@@ -17,6 +18,7 @@ try {
     const css = new Gtk.CssProvider();
     css.load_from_data(`
         .bioinfo-table label { padding: 5px 8px; }
+        .bioinfo-table .row-number { padding: 2px 3px; }
         .bioinfo-table .numeric { font-feature-settings: "tnum"; }
         .bioinfo-table columnview { border: none; }
         .bioinfo-table .dim-label { font-size: 11px; }
@@ -27,10 +29,10 @@ try {
 
 // Rows are GObjects because Gio.ListStore and Gtk.ColumnView expect a GListModel.
 const TableItem = GObject.registerClass(class TableItem extends GObject.Object {
-    constructor(cells, index) {
+    constructor(cells, recordIndex) {
         super();
         this.cells = cells;
-        this.index = index;
+        this.recordIndex = recordIndex;
     }
 });
 
@@ -70,7 +72,16 @@ export const Klass = class LabTable extends Adw.Bin {
     }
     get resizePolicy() { return ResizePolicy.NAT_SIZE; }
     get topBarStyle() { return Adw.ToolbarStyle.FLAT; }
-    cleanup() { this._table = null; this._types = null; this._store = null; this._scroll.set_child(null); }
+    cleanup() {
+        this.cancellable.cancel();
+        const menu = this._menuPopover; this._menuPopover = null;
+        const inspect = this._inspectPopover; this._inspectPopover = null;
+        menu?.popdown(); menu?.unparent();
+        inspect?.popdown(); inspect?.unparent();
+        this._activeCell = null; this._table = null; this._types = null; this._store = null;
+        this._view = null;
+        this._scroll.set_child(null);
+    }
 
     _makeUI() {
         const root = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 0,
@@ -111,20 +122,19 @@ export const Klass = class LabTable extends Adw.Bin {
                 ...genomic, truncatedRows: genomic.rowLimit, truncatedBytes: partial,
                 clippedColumns: genomic.colLimit,
             } : prepareTable(text, detectSeparator(text, this._name), true, partial);
-            this._types = guessTypes(this._table.rows, this._table.headers.length);
+            this._types = guessTypes(this._table.rows, this._table.headers.length, this._table.headers);
             this._renderTable();
         }
         this.markReady();
     }
     _renderTable() {
         const {headers, rows} = this._table;
-        const sampled = this._table.truncatedRows || this._table.truncatedBytes ||
-            this._table.clippedColumns;
+        const status = previewStatus(this._table);
         const notes = this._table.notes ?? [];
-        const summary = [this._table.kind, notes[0], sampled ? `${rows.length} rows from file prefix` : '']
+        const summary = [this._table.kind, notes[0], status.label]
             .filter(Boolean).join(' · ');
         this._hint.set_label(summary);
-        this._hint.set_tooltip_text([notes.join('\n'), `${rows.length} rows shown from the file prefix`]
+        this._hint.set_tooltip_text([notes.join('\n'), status.tooltip]
             .filter(Boolean).join('\n'));
         this._hint.set_visible(!!summary);
         if (headers.length === 0) {
@@ -137,11 +147,50 @@ export const Klass = class LabTable extends Adw.Bin {
             const view = new Gtk.ColumnView({show_row_separators: true,
                 show_column_separators: false, reorderable: false,
                 hexpand: true, vexpand: true});
+            this._view = view;
             view.add_css_class('data-table');
             const sorting = new Gtk.SortListModel({model: store, sorter: view.get_sorter(), incremental: true});
             const selection = new Gtk.SingleSelection({model: sorting,
                 autoselect: false, can_unselect: true});
             view.set_model(selection);
+
+            const menuModel = new Gio.Menu();
+            menuModel.append('Copy cell value', 'table.copy-cell');
+            menuModel.append('Copy row as TSV', 'table.copy-row');
+            menuModel.append('Inspect value', 'table.inspect');
+            const actions = new Gio.SimpleActionGroup();
+            for (const [name, callback] of [
+                ['copy-cell', () => this._copyText(this._activeCell?.value)],
+                ['copy-row', () => this._copyText(this._activeCell && rowToTsv(this._activeCell.cells))],
+                ['inspect', () => this._inspectValue(this._activeCell)],
+            ]) {
+                const action = new Gio.SimpleAction({name});
+                action.connect('activate', callback);
+                actions.add_action(action);
+            }
+            view.insert_action_group('table', actions);
+            const menuPopover = Gtk.PopoverMenu.new_from_model(menuModel);
+            menuPopover.set_parent(view);
+            menuPopover.connect('closed', () => { this._activeCell = null; });
+            this._menuPopover = menuPopover;
+
+            const keys = new Gtk.EventControllerKey();
+            keys.connect('key-pressed', (_controller, keyval, _keycode, state) => {
+                const control = (state & Gdk.ModifierType.CONTROL_MASK) !== 0;
+                const item = selection.get_selected_item();
+                if (control && keyval === Gdk.KEY_c && item) {
+                    this._copyText(rowToTsv(item.cells));
+                    return true;
+                }
+                return false;
+            });
+            view.add_controller(keys);
+
+            const showAt = (popover, point) => {
+                const anchor = new Graphene.Point(point ?? {x: 0, y: 0});
+                popover.set_pointing_to(new Gdk.Rectangle({x: anchor.x, y: anchor.y, width: 1, height: 1}));
+                popover.popup();
+            };
 
             headers.forEach((header, col) => {
                 const factory = new Gtk.SignalListItemFactory();
@@ -151,6 +200,25 @@ export const Klass = class LabTable extends Adw.Bin {
                         halign: Gtk.Align.FILL, hexpand: true,
                         ellipsize: Pango.EllipsizeMode.END, single_line_mode: true});
                     if (numeric) widget.add_css_class('numeric');
+                    const click = new Gtk.GestureClick({button: 0});
+                    widget.add_controller(click);
+                    click.connect('pressed', (gesture, presses, x, y) => {
+                        const current = item.get_item();
+                        const position = item.get_position();
+                        if (!current || position < 0) return;
+                        const [ok, point] = widget.compute_point(view, new Graphene.Point({x, y}));
+                        const anchor = ok ? {x: point.x, y: point.y} : {x: 0, y: 0};
+                        const cells = current.cells.map(value => String(value ?? ''));
+                        const active = {value: cells[col] ?? '', cells,
+                            row: current.recordIndex, column: col, anchor};
+                        if (gesture.get_current_button() === Gdk.BUTTON_SECONDARY) {
+                            this._activeCell = active;
+                            selection.set_selected(position);
+                            showAt(menuPopover, anchor);
+                        } else if (gesture.get_current_button() === Gdk.BUTTON_PRIMARY && presses === 2) {
+                            this._inspectValue(active);
+                        }
+                    });
                     item.set_child(widget);
                 });
                 factory.connect('bind', (_factory, item) => {
@@ -163,12 +231,25 @@ export const Klass = class LabTable extends Adw.Bin {
                     item.get_child().set_tooltip_text(null);
                 });
                 const column = new Gtk.ColumnViewColumn({title: String(header).slice(0, 55),
-                    factory, resizable: true, expand: headers.length <= 10});
+                    factory, resizable: true, expand: !numeric});
                 column.set_fixed_width(widths[col]);
                 column.set_sorter(Gtk.CustomSorter.new((a, b) => compareCells(
-                    a.cells[col] ?? '', b.cells[col] ?? '', this._types[col], a.index, b.index)));
+                    a.cells[col] ?? '', b.cells[col] ?? '', this._types[col])));
                 view.append_column(column);
             });
+            const gutterFactory = new Gtk.SignalListItemFactory();
+            gutterFactory.connect('setup', (_factory, item) => {
+                const label = new Gtk.Label({xalign: 1, halign: Gtk.Align.FILL, width_chars: 3});
+                label.add_css_class('dim-label');
+                label.add_css_class('row-number');
+                item.set_child(label);
+            });
+            gutterFactory.connect('bind', (_factory, item) => {
+                item.get_child().set_label(String(item.get_item().recordIndex + 1));
+            });
+            const gutter = new Gtk.ColumnViewColumn({title: '#', factory: gutterFactory, resizable: false});
+            gutter.set_fixed_width(42);
+            view.insert_column(0, gutter);
             this._store = store;
             this._scroll.set_child(view);
         } catch (e) {
@@ -180,6 +261,48 @@ export const Klass = class LabTable extends Adw.Bin {
             this._scroll.set_child(new Gtk.TextView({buffer, editable: false,
                 monospace: true, wrap_mode: Gtk.WrapMode.NONE}));
         }
+    }
+    _copyText(text) {
+        if (text === undefined || text === null) return;
+        this.get_display().get_clipboard().set_content(Gdk.ContentProvider.new_for_value(String(text)));
+    }
+    _inspectValue(active) {
+        if (!active) return;
+        if (this._inspectPopover) {
+            const previous = this._inspectPopover;
+            this._inspectPopover = null;
+            previous.popdown();
+            previous.unparent();
+        }
+        const buffer = new Gtk.TextBuffer();
+        buffer.set_text(active.value, -1);
+        const text = new Gtk.TextView({buffer, editable: false, cursor_visible: true,
+            monospace: true, wrap_mode: Gtk.WrapMode.WORD_CHAR,
+            left_margin: 8, right_margin: 8, top_margin: 6, bottom_margin: 6});
+        const scroll = new Gtk.ScrolledWindow({max_content_width: 520, max_content_height: 280,
+            hscrollbar_policy: Gtk.PolicyType.AUTOMATIC, vscrollbar_policy: Gtk.PolicyType.AUTOMATIC});
+        scroll.set_child(text);
+        const box = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 6, margin_top: 8,
+            margin_bottom: 8, margin_start: 8, margin_end: 8});
+        const status = new Gtk.Label({label: cellValueStatus(this._table, active.row, active.column),
+            xalign: 0, wrap: true});
+        status.add_css_class('dim-label');
+        const copy = new Gtk.Button({label: 'Copy value', halign: Gtk.Align.END});
+        copy.connect('clicked', () => this._copyText(active.value));
+        box.append(status); box.append(scroll); box.append(copy);
+        const popover = new Gtk.Popover({autohide: true});
+        popover.set_child(box);
+        popover.set_parent(this._view);
+        popover.connect('closed', () => {
+            if (this._inspectPopover === popover) {
+                this._inspectPopover = null;
+                popover.unparent();
+            }
+        });
+        this._inspectPopover = popover;
+        const anchor = new Graphene.Point(active.anchor ?? {x: 0, y: 0});
+        popover.set_pointing_to(new Gdk.Rectangle({x: anchor.x, y: anchor.y, width: 1, height: 1}));
+        popover.popup();
     }
 };
 function formatSize(n) {

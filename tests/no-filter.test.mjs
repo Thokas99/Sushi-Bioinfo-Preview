@@ -13,4 +13,4 @@ const types = guessTypes(cells, 2);
 assert.deepEqual(sortRows(cells, null, false, types).map(x => x.cells[0]), ['A','B','Q gene']);
 assert.deepEqual(sortRows(cells, 1, false, types).map(x => x.cells[0]), ['B','Q gene','A']);
 assert.deepEqual(sortRows(cells, 1, true, types).map(x => x.cells[0]), ['A','Q gene','B']);
-console.log('No search/filter UI in either Sushi version; sorting unchanged.');
+console.log('No search/filter controls were reintroduced; sampled sorting remains available.');
