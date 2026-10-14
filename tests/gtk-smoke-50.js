@@ -21,5 +21,12 @@ if (preview._format === 'parquet' &&
     throw new Error('GTK3 Parquet range preview returned unexpected rows or scope');
 if (!(preview._scroll.get_child() instanceof Gtk.TreeView))
     throw new Error('GTK3 table preview did not create its native table view');
+const [horizontalPolicy, verticalPolicy] = preview._scroll.get_policy();
+if (horizontalPolicy !== Gtk.PolicyType.ALWAYS || verticalPolicy !== Gtk.PolicyType.ALWAYS)
+    throw new Error('GTK3 row and column scrollbars must stay visible');
+preview._message('No table preview');
+const [messageHorizontalPolicy, messageVerticalPolicy] = preview._scroll.get_policy();
+if (messageHorizontalPolicy !== Gtk.PolicyType.AUTOMATIC || messageVerticalPolicy !== Gtk.PolicyType.AUTOMATIC)
+    throw new Error('GTK3 message view must not show inactive table scrollbars');
 preview.destroy();
 print('GTK3 table preview loaded and populated.');

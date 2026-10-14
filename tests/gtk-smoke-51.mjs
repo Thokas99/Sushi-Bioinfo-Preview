@@ -30,5 +30,12 @@ if (preview._format === 'parquet' &&
     throw new Error('GTK4 Parquet range preview returned unexpected rows or scope');
 if (!(preview._scroll.get_child() instanceof Gtk.ColumnView))
     throw new Error('GTK4 table preview did not create its native table view');
+const [horizontalPolicy, verticalPolicy] = preview._scroll.get_policy();
+if (horizontalPolicy !== Gtk.PolicyType.ALWAYS || verticalPolicy !== Gtk.PolicyType.ALWAYS)
+    throw new Error('GTK4 row and column scrollbars must stay visible');
+preview._showMessage('No table preview');
+const [messageHorizontalPolicy, messageVerticalPolicy] = preview._scroll.get_policy();
+if (messageHorizontalPolicy !== Gtk.PolicyType.AUTOMATIC || messageVerticalPolicy !== Gtk.PolicyType.AUTOMATIC)
+    throw new Error('GTK4 message view must not show inactive table scrollbars');
 preview.cleanup();
 print('GTK4 table preview loaded and populated.');

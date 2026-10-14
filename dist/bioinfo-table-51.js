@@ -9297,6 +9297,7 @@ export const Klass = class LabTable extends Adw.Bin {
         root.append(this._scroll);
     }
     _showMessage(message) {
+        this._scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC);
         this._hint.set_visible(false);
         this._scroll.set_child(new Gtk.Label({label: message, xalign: 0, wrap: true,
             margin_top: 12, margin_start: 12}));
@@ -9367,6 +9368,7 @@ export const Klass = class LabTable extends Adw.Bin {
         if (headers.length === 0) {
             this._showMessage('No table columns detected'); return;
         }
+        this._scroll.set_policy(Gtk.PolicyType.ALWAYS, Gtk.PolicyType.ALWAYS);
         const widths = columnWidthHints(headers, rows, this._types);
         try {
             const store = new Gio.ListStore({item_type: TableItem});

@@ -7,8 +7,16 @@ const gtk3 = readFileSync(new URL('../src/table-50.template.js', import.meta.url
 assert.match(gtk4, /new Gtk\.ColumnView\(/, 'GTK4 must use native, virtualized ColumnView');
 assert.match(gtk4, /new Gtk\.SortListModel\(/, 'GTK4 sorting remains native');
 assert.match(gtk4, /new Gtk\.ScrolledWindow\(/, 'GTK4 must use scrollable viewport');
+assert.ok(/this\._scroll\.set_policy\(Gtk\.PolicyType\.ALWAYS,\s*Gtk\.PolicyType\.ALWAYS\)/.test(gtk4),
+    'GTK4 table view must keep row and column scrollbars visible');
+assert.ok(/this\._scroll\.set_policy\(Gtk\.PolicyType\.AUTOMATIC,\s*Gtk\.PolicyType\.AUTOMATIC\)/.test(gtk4),
+    'GTK4 message views must not show inactive table scrollbars');
 assert.match(gtk3, /new Gtk\.TreeView\(/, 'GTK3 must use native TreeView');
 assert.match(gtk3, /new Gtk\.ScrolledWindow\(/, 'GTK3 must use scrollable viewport');
+assert.ok(/this\._scroll\.set_policy\(Gtk\.PolicyType\.ALWAYS,\s*Gtk\.PolicyType\.ALWAYS\)/.test(gtk3),
+    'GTK3 table view must keep row and column scrollbars visible');
+assert.ok(/this\._scroll\.set_policy\(Gtk\.PolicyType\.AUTOMATIC,\s*Gtk\.PolicyType\.AUTOMATIC\)/.test(gtk3),
+    'GTK3 message views must not show inactive table scrollbars');
 assert.match(gtk3, /this\._message\(`\$\{info\.kind\}\\n\$\{info\.message\}`\)/,
     'GTK3 signature-only previews must disclose metadata limitations');
 for (const [name, code] of [['GTK4', gtk4], ['GTK3', gtk3]]) {

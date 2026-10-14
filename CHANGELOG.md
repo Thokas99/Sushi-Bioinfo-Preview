@@ -4,6 +4,16 @@ Notable changes to Sushi Bioinfo Preview are documented here. This changelog fol
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-14
+
+### Added
+
+- Keep horizontal and vertical table scrollbars visible and draggable for navigating loaded columns and rows.
+
+### Changed
+
+- Use Node 24 compatible GitHub Actions and pin CI to Ubuntu 24.04.
+
 ## [0.2.0] - 2026-10-14
 
 ### Added
@@ -20,5 +30,6 @@ Notable changes to Sushi Bioinfo Preview are documented here. This changelog fol
 
 - Support Parquet codec decoding in GJS runtimes without the browser `btoa` function.
 
-[Unreleased]: https://github.com/Thokas99/Sushi-Bioinfo-Preview/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Thokas99/Sushi-Bioinfo-Preview/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Thokas99/Sushi-Bioinfo-Preview/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Thokas99/Sushi-Bioinfo-Preview/compare/v0.1.0...v0.2.0

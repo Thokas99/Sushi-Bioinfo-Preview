@@ -9251,6 +9251,7 @@ var Klass = GObject.registerClass({
     }
     _readyNow() { if (!this._ready) { this._ready = true; this.isReady(); } }
     _message(s) {
+        this._scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC);
         this._hint.hide();
         if (this._scroll.get_child()) this._scroll.remove(this._scroll.get_child());
         this._scroll.add(new Gtk.Label({label: String(s), visible: true, xalign: 0}));
@@ -9355,6 +9356,7 @@ var Klass = GObject.registerClass({
             .filter(Boolean).join('\n'));
         this._hint.set_visible(!!summary);
         if (!headers.length) { this._message('No table columns detected'); return; }
+        this._scroll.set_policy(Gtk.PolicyType.ALWAYS, Gtk.PolicyType.ALWAYS);
         const widths = columnWidthHints(headers, rows, this._types);
         try {
             const store = new Gtk.ListStore();

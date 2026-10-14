@@ -35,12 +35,14 @@ Right-click a cell to copy its retained value, copy the row as TSV, or inspect t
 
 The `#` gutter shows each displayed record's position in the sampled data before sorting. Headers and format-skipped comment or metadata lines are not counted; for Matrix Market files it numbers displayed entries. It is not a physical file line number. Sorting affects only loaded rows, keeps equal values in their original order, and sorts inferred numeric columns numerically. Missing values follow GTK's sort direction: last in ascending order and first in descending order.
 
+Drag the visible horizontal and vertical scrollbars to move through columns and loaded rows.
+
 ## Install
 
-Install from the [v0.2.0 release](https://github.com/Thokas99/Sushi-Bioinfo-Preview/releases/tag/v0.2.0). With the GNOME Sushi Flatpak (`org.gnome.NautilusPreviewer`) and the host tools `flatpak` and `update-mime-database` installed, run:
+Install from the [v0.2.1 release](https://github.com/Thokas99/Sushi-Bioinfo-Preview/releases/tag/v0.2.1). With the GNOME Sushi Flatpak (`org.gnome.NautilusPreviewer`) and the host tools `flatpak` and `update-mime-database` installed, run:
 
 ```bash
-git clone --branch v0.2.0 --depth 1 https://github.com/Thokas99/Sushi-Bioinfo-Preview.git
+git clone --branch v0.2.1 --depth 1 https://github.com/Thokas99/Sushi-Bioinfo-Preview.git
 cd Sushi-Bioinfo-Preview
 bash install.sh
 flatpak kill org.gnome.NautilusPreviewer 2>/dev/null || true
