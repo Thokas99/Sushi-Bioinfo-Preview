@@ -10,6 +10,7 @@ node tests/layout.test.mjs
 node tests/no-filter.test.mjs
 node tests/core.test.mjs
 node tests/formats.test.mjs
+node tests/table-budget.test.mjs
 node tests/documents.test.mjs
 node tests/office.test.mjs
 node tests/office-style.test.mjs
@@ -17,3 +18,4 @@ bash tests/install.test.sh
 bash tests/mime.test.sh
 bash tests/build.test.sh
 for file in dist/*.js; do node --check "$file"; done
+bash tests/gtk-smoke.test.sh

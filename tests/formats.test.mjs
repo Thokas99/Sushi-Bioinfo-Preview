@@ -57,7 +57,8 @@ assert.equal(binaryPreview('A.h5ad', hd, 20e9).recognized, true);
 assert.equal(binaryPreview('A.h5ad', Uint8Array.from([0,0,0,0,0,0,0,0]),20e9).recognized, false);
 assert.equal(binaryPreview('A.parquet', Uint8Array.from([80,65,82,49]),1e9).recognized, true);
 assert.equal(binaryPreview('A.parquet', Uint8Array.from([0,0,0,0]),1e9).recognized, false);
-assert.deepEqual(Object.values(LIMITS), [16*1024*1024,10000,128,512]);
+assert.deepEqual([LIMITS.bytes,LIMITS.rows,LIMITS.tableRows,LIMITS.columns,LIMITS.cells,LIMITS.fieldChars],
+    [16*1024*1024,10000,10000,128,1_280_000,512]);
 const big = 'col1\tcol2\n' + 'sample\t42\n'.repeat(LIMITS.rows + 200);
 const parsed = prepareTable(big, '\t');
 assert.equal(parsed.rows.length, LIMITS.rows);

@@ -42,6 +42,11 @@ assert.equal(limited.hitRowLimit, true);
 assert.equal(prepareTable('a,b\n1,2\n3,4', ',', true, true).rows.length, 1); // drop partial
 assert.equal(prepareTable('a,b\n1,2\n3,4', ',', true, false).rows.length, 2);
 assert.equal(prepareTable('a\tb\n1\t2\n3\n','\t').raggedRows, 1);
+const ragged = prepareTable('a,b\n1,2\n3\n', ',');
+assert.equal(ragged.raggedRows, 1);
+assert.match(core.previewStatus(ragged).tooltip, /1 sampled data row has a different field count/);
+assert.equal(prepareTable('a,b\n1,2\n3,4\n', ',').raggedRows, 0);
+assert.equal(prepareTable('a,b\n1,2,3\n4,5,6\n', ',').raggedRows, 2);
 const clipped = parseDelimited(`name\n${'x'.repeat(600)}\n`, ',');
 assert.equal(clipped.rows[1][0].length, 512);
 assert.equal(clipped.clippedFields, true);
@@ -86,5 +91,7 @@ assert.match(limitedStatus.tooltip, /10000 rows shown from the file prefix/);
 assert.match(limitedStatus.tooltip, /first 128 columns/);
 assert.match(limitedStatus.tooltip, /field.*512 characters/i);
 assert.match(limitedStatus.tooltip, /trailing partial record/i);
+assert.match(core.previewStatus({rows:[['x']],headers:['x'],cellLimited:true}).tooltip,
+    /total cell limit/i);
 assert.deepEqual(prepareTable('', ',').headers, []);
 console.log('All core parsing, sorting, type inference tests passed.');

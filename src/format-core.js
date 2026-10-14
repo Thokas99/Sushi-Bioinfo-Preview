@@ -116,7 +116,7 @@ function trimWhitespace(line, columns, clippedFields = null, rowIndex = 0) {
 function result(kind, headers, lines, columns, notes, incompleteRecord = false, lineLimit = false, partial = false) {
     const rows = [];
     const truncatedFields = new Map();
-    for (let index = 0; index < Math.min(lines.length, LIMITS.rows); index++)
+    for (let index = 0; index < Math.min(lines.length, LIMITS.tableRows); index++)
         rows.push(trimDelimited(lines[index], columns, truncatedFields, index));
     let nc = kind === 'BED intervals' ? 3 : headers.length;
     for (const row of rows) nc = Math.max(nc, row.length);
@@ -125,8 +125,9 @@ function result(kind, headers, lines, columns, notes, incompleteRecord = false, 
     return {kind, headers: names, rows, notes, truncatedFields,
         clippedFields: truncatedFields.size > 0, truncatedHeader: false,
         incompleteRecord, truncatedBytes: partial || lineLimit,
-        truncatedRows: lines.length > LIMITS.rows || lineLimit,
-        rowLimit: lines.length > LIMITS.rows || lineLimit,
+        truncatedRows: lines.length > LIMITS.tableRows || lineLimit,
+        rowLimit: lines.length > LIMITS.tableRows || lineLimit,
+        cellLimited: LIMITS.tableCellLimitActive && lines.length > LIMITS.tableRows,
         colLimit: headers.length > LIMITS.columns || lines.some(line => exceedsColumns(line, LIMITS.columns))};
 }
 
@@ -140,7 +141,7 @@ export function genomicPreview(name, text, partial) {
         const headerClips = new Map();
         const headers = headerLine ? trimDelimited(headerLine.slice(1), LIMITS.columns + 1, headerClips) :
             ['CHROM','POS','ID','REF','ALT','QUAL','FILTER','INFO','FORMAT'];
-        const records = cleanRows(lines, x => x.startsWith('#'), LIMITS.rows + 1);
+        const records = cleanRows(lines, x => x.startsWith('#'), LIMITS.tableRows + 1);
         const samples = Math.max(0, headers.length - 9);
         const preview = result('VCF variants', headers, records, LIMITS.columns,
             ['POS uses 1-based coordinates', 'INFO/FORMAT displayed as text; no genotype interpretation',
@@ -153,7 +154,7 @@ export function genomicPreview(name, text, partial) {
     if (kind === 'bed') {
         const headers = ['chrom','chromStart','chromEnd','name','score','strand',
             'thickStart','thickEnd','itemRgb','blockCount','blockSizes','blockStarts'];
-        const records = cleanRows(lines, x => /^(#|track\b|browser\b)/i.test(x), LIMITS.rows + 1);
+        const records = cleanRows(lines, x => /^(#|track\b|browser\b)/i.test(x), LIMITS.tableRows + 1);
         return result('BED intervals', headers, records, LIMITS.columns,
             ['BED starts are 0-based; ends are exclusive', 'Columns are positional; additional columns are generic'],
             incompleteRecord, lineLimit, partial);
@@ -162,7 +163,7 @@ export function genomicPreview(name, text, partial) {
         const headers = ['seqid','source','type','start','end','score','strand','phase','attributes'];
         const fastaStart = lines.findIndex(x => x.startsWith('##FASTA'));
         const annotationLines = fastaStart >= 0 ? lines.slice(0, fastaStart) : lines;
-        const records = cleanRows(annotationLines, x => x.startsWith('#'), LIMITS.rows + 1);
+        const records = cleanRows(annotationLines, x => x.startsWith('#'), LIMITS.tableRows + 1);
         return result('GFF / GTF features', headers, records, LIMITS.columns,
             ['GFF/GTF starts and ends are 1-based inclusive', 'Attributes are not expanded'],
             incompleteRecord, lineLimit, partial);

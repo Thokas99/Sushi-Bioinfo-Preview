@@ -12,10 +12,18 @@ function previewLimit(name, defaultValue, minimum, maximum) {
     return Math.max(minimum, Math.min(maximum, Number(raw)));
 }
 
+const MAX_TABLE_CELLS = 10000 * 128;
+const requestedRows = previewLimit('SUSHI_BIOINFO_MAX_ROWS', 10000, 100, 25000);
+const columns = previewLimit('SUSHI_BIOINFO_MAX_COLUMNS', 128, 8, 256);
+const tableRows = Math.min(requestedRows, Math.floor(MAX_TABLE_CELLS / columns));
+
 export const LIMITS = Object.freeze({
     bytes: previewLimit('SUSHI_BIOINFO_MAX_MIB', 16, 1, 64) * 1024 * 1024,
-    rows: previewLimit('SUSHI_BIOINFO_MAX_ROWS', 10000, 100, 25000),
-    columns: previewLimit('SUSHI_BIOINFO_MAX_COLUMNS', 128, 8, 256),
+    rows: requestedRows,
+    tableRows,
+    columns,
+    cells: MAX_TABLE_CELLS,
+    tableCellLimitActive: tableRows < requestedRows,
     fieldChars: 512,
 });
 
@@ -130,14 +138,14 @@ export function detectSeparator(text, extension = '') {
 
 export function prepareTable(text, separator, hasHeader = true, partialByteRead = false) {
     const parsed = parseDelimited(text, separator, {
-        maxRows: LIMITS.rows + (hasHeader ? 2 : 1),
+        maxRows: LIMITS.tableRows + (hasHeader ? 2 : 1),
         maxColumns: LIMITS.columns,
         keepPartial: !partialByteRead,
     });
     const all = parsed.rows;
     const originalHeaders = hasHeader ? (all.shift() ?? []) : [];
     const parsedRowCount = all.length;
-    if (all.length > LIMITS.rows) all.length = LIMITS.rows;
+    if (all.length > LIMITS.tableRows) all.length = LIMITS.tableRows;
     const rows = all;
     let cols = originalHeaders.length;
     for (const row of rows) cols = Math.max(cols, row.length);
@@ -158,16 +166,23 @@ export function prepareTable(text, separator, hasHeader = true, partialByteRead 
         if (columns) truncatedFields.set(index, columns);
     });
     const truncatedHeader = hasHeader && (parsed.clippedFieldColumns.get(0)?.length ?? 0) > 0;
+    const expectedWidth = parsed.widths[0];
+    const sampledWidths = parsed.widths.slice(hasHeader ? 1 : 0,
+        (hasHeader ? 1 : 0) + rows.length);
+    const raggedRows = expectedWidth === undefined ? 0
+        : sampledWidths.filter(width => width !== expectedWidth).length;
     return {
         headers, rows, separator, hasHeader,
-        truncatedRows: parsed.hitRowLimit || parsedRowCount > LIMITS.rows,
+        truncatedRows: parsed.hitRowLimit || parsedRowCount > LIMITS.tableRows,
         truncatedBytes: partialByteRead,
         clippedFields: truncatedHeader || truncatedFields.size > 0,
         truncatedHeader,
         truncatedFields,
         clippedColumns: parsed.clippedColumns,
         incompleteRecord: partialByteRead && parsed.droppedPartial,
-        raggedRows: parsed.widths.filter(w => w !== cols).length,
+        raggedRows,
+        cellLimited: LIMITS.tableCellLimitActive &&
+            (parsed.hitRowLimit || parsedRowCount > LIMITS.tableRows),
         quoteWarning: parsed.unterminatedQuote && !partialByteRead,
     };
 }
@@ -276,7 +291,11 @@ export function previewStatus(table) {
     if (table.truncatedBytes) messages.push('Read only a bounded file prefix.');
     if (table.incompleteRecord) messages.push('A trailing partial record was omitted.');
     if (table.truncatedRows) messages.push(`${table.rows.length} rows shown from the file prefix; more rows may be present.`);
+    if (table.cellLimited) messages.push('The row limit was lowered to keep the table within the total cell limit.');
     if (table.clippedColumns) messages.push(`Only the first ${LIMITS.columns} columns are shown.`);
+    if (table.raggedRows) messages.push(table.raggedRows === 1
+        ? '1 sampled data row has a different field count.'
+        : `${table.raggedRows} sampled data rows have a different field count.`);
     if (table.truncatedHeader) messages.push('One or more header fields were truncated.');
     if (table.clippedFields) messages.push(`One or more fields are limited to ${LIMITS.fieldChars} characters.`);
     if (table.quoteWarning) messages.push('An unterminated quoted field prevented the final record from being parsed.');
