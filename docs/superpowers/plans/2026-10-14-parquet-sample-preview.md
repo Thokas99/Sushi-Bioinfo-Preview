@@ -65,7 +65,7 @@
 - [x] Add GTK3 and GTK4 success-path smoke cases for synthetic Parquet previews; core tests cover malformed ranges and cancellation.
 - [x] Add the smallest GIO range adapters and dispatch only `.parquet` to `parquetPreview`; retain H5AD signature-only behavior.
 - [x] Set the existing hint and tooltip to describe the bounded read and first stored rows with metadata-reported count.
-- [ ] Run GTK smoke tests in CI; local execution was skipped because GJS and Xvfb are unavailable.
+- [x] Run GTK smoke tests in CI; local execution was skipped because GJS and Xvfb are unavailable.
 
 ### Task 3: Update docs, generated plugins, and release checks
 

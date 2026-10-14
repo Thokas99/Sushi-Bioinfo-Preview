@@ -1,7 +1,7 @@
 # Parquet sample preview design
 
 **Date:** 2026-10-14  
-**Status:** Implemented; CI is configured to require GTK smoke checks.
+**Status:** Implemented; the required GitHub CI GTK smoke checks pass.
 
 ## Goal
 
