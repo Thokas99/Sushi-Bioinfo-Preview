@@ -27,7 +27,18 @@ with tempfile.TemporaryDirectory() as tmp:
                     '--target=es2022', '--legal-comments=none', f'--outfile={bundle}'],
                    cwd=ROOT, check=True)
     notice = (ROOT / 'THIRD_PARTY_NOTICES.md').read_text().replace('*/', '* /')
-    cores['PARQUET'] = f'/*\n{notice}\n*/\n{bundle.read_text()}'
+    atob = """const atob = typeof globalThis.atob === 'function'
+    ? globalThis.atob.bind(globalThis)
+    : encoded => {
+        // GJS lacks atob; bundled Snappy and Brotli codecs call it at load time.
+        const bytes = GLib.base64_decode(encoded);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 8192)
+            binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+        return binary;
+    };
+"""
+    cores['PARQUET'] = f'{atob}/*\n{notice}\n*/\n{bundle.read_text()}'
 for target in ('table', 'document', 'office'):
     for version in (50, 51):
         name = f'{target}-{version}'
