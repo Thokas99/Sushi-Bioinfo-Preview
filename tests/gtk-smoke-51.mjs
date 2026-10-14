@@ -6,6 +6,22 @@ import Gtk from 'gi://Gtk?version=4.0';
 Gtk.init();
 Adw.init();
 const {Klass} = await import(GLib.filename_to_uri(ARGV[0], null));
+for (const [prototype, name] of [
+    [Gio.File.prototype, 'read_async'],
+    [Gio.InputStream.prototype, 'read_bytes_async'],
+]) {
+    const original = prototype[name];
+    prototype[name] = function(...args) {
+        print(`GTK4 smoke: ${name} called`);
+        return Promise.resolve(original.apply(this, args)).then(value => {
+            print(`GTK4 smoke: ${name} resolved`);
+            return value;
+        }, error => {
+            printerr(`GTK4 smoke: ${name} rejected: ${error.stack ?? error}`);
+            throw error;
+        });
+    };
+}
 const loop = new GLib.MainLoop(null, false);
 let ready = false, timedOut = false;
 const load = Klass.prototype._load;
