@@ -124,7 +124,7 @@ var Klass = GObject.registerClass({
             populate();
             const view = new Gtk.TreeView({model: store, visible: true,
                 headers_visible: true, enable_search: false,
-                grid_lines: Gtk.TreeViewGridLines.HORIZONTAL});
+                enable_grid_lines: Gtk.TreeViewGridLines.HORIZONTAL});
             this._view = view;
             const gutterRenderer = new Gtk.CellRendererText({xalign: 1, xpad: 2, ypad: 3});
             const gutter = new Gtk.TreeViewColumn({title: '#', resizable: false, sizing: Gtk.TreeViewColumnSizing.FIXED});

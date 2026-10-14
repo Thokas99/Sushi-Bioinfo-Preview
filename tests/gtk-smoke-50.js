@@ -15,5 +15,7 @@ loop.run();
 if (!ready || timedOut) throw new Error('GTK3 table preview did not become ready');
 if (preview._table?.rows?.length !== 2 || preview._store.iter_n_children(null) !== 2)
     throw new Error('GTK3 table preview did not populate its rows');
+if (!(preview._scroll.get_child() instanceof Gtk.TreeView))
+    throw new Error('GTK3 table preview did not create its native table view');
 preview.destroy();
 print('GTK3 table preview loaded and populated.');
