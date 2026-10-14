@@ -24,6 +24,10 @@ await ready;
 GLib.source_remove(timeout);
 if (preview._table?.rows?.length !== 2 || preview._store.get_n_items() !== 2)
     throw new Error('GTK4 table preview did not populate its rows');
+if (preview._format === 'parquet' &&
+    (preview._table.headers[0] !== 'gene' || preview._table.rows[0][0] !== 'TP53' ||
+        !preview._table.notes.join(' ').includes('metadata reports 2 rows')))
+    throw new Error('GTK4 Parquet range preview returned unexpected rows or scope');
 if (!(preview._scroll.get_child() instanceof Gtk.ColumnView))
     throw new Error('GTK4 table preview did not create its native table view');
 preview.cleanup();

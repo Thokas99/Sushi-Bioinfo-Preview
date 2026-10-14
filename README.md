@@ -18,7 +18,8 @@ Sushi Bioinfo Preview adds small, native GTK views for file types Sushi does not
 | BED, bedGraph, narrowPeak, broadPeak | Interval fields; BED start/end coordinates are 0-based and half-open. |
 | GFF, GFF3, GTF | The standard nine fields; attributes stay as text. Coordinates are 1-based and inclusive. |
 | MTX (Matrix Market) | Declared dimensions and stored entries; sparse matrices are not expanded into dense tables. |
-| H5AD, Parquet | File-signature recognition only. No AnnData or Parquet metadata is read. |
+| H5AD | File-signature recognition only. No AnnData metadata is read. |
+| Parquet | A table preview of the first stored rows, with bounded footer and selected-page reads. The footer row count is metadata; the full file is not validated and the sample is not representative. |
 | DOCX/DOCM, XLSX/XLSM, PPTX/PPTM, ODT/OTT | A bounded text extract. Page layout, charts, and other visual formatting are not reproduced; macros are not run. |
 | Markdown | A restricted local preview and source view. |
 | HTML, PDF, compressed files, others | Left to Sushi’s built-in preview or fallback. |
@@ -54,7 +55,7 @@ flatpak kill org.gnome.NautilusPreviewer 2>/dev/null || true
 
 ## Limits
 
-Table previews start at the beginning of a file and default to a 16 MiB prefix, 10,000 rows, 128 columns, and 512 characters per field. A hard cap of 1,280,000 table cells also applies, so raising the column limit can lower the effective row limit. Muted status text and its tooltip identify limits; a preview may omit later rows or a trailing partial record. Inspection and copying use retained values, not text shortened only for display. Sorting applies only to loaded rows. Reads can be cancelled, while parsing and GTK model construction happen on the UI thread; very large previews or remote storage can briefly delay interaction.
+CSV, TSV, and genomic table previews read a bounded prefix. Parquet requires a seekable file and reads its footer plus selected column pages, with total fetched bytes capped at 16 MiB by default. It shows the first stored rows in file order, up to 10,000 rows, 128 columns, 1,280,000 cells, and 512 characters per field; its row count comes from footer metadata and the rest of the file is not validated. Other table limits apply to the data read. A hard cap of 1,280,000 table cells also applies, so raising the row or column limit can lower the effective row limit. Muted status text and its tooltip identify limits; a preview may omit later rows or a trailing partial record. Inspection and copying use retained values, not text shortened only for display. Sorting applies only to loaded rows. Reads can be cancelled, while parsing and GTK model construction happen on the UI thread; very large previews or remote storage can briefly delay interaction.
 
 <details>
 <summary>Optional table limits</summary>
@@ -76,13 +77,15 @@ Raise limits only when needed; larger previews can use more memory and take long
 
 ## Development
 
-Edit `src/`; `python3 build.py` regenerates the committed, self-contained plugins in `dist/`. Run the test suite with:
+Run `npm ci` to install the pinned build and test dependencies. Edit `src/`; `python3 build.py` regenerates the committed, self-contained plugins in `dist/`. Run the test suite with:
 
 ```bash
 npm test
 ```
 
 Tests cover parsing, limits, MIME registration, generated files, and mocked install/uninstall behavior. GTK loading, rendering, scrolling, and keyboard behavior require manual testing in GNOME.
+
+Bundled dependency licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Add small synthetic fixtures for new formats or edge cases. Do not include patient or study data. See [AGENTS.md](AGENTS.md) for the project’s development and safety conventions.
 

@@ -10,6 +10,7 @@ import Pango from 'gi://Pango';
 import {Renderer, ResizePolicy} from 'resource://org/gnome/NautilusPreviewer/plugin-api-1.js';
 /* EMBED_CORE_HERE */
 /* EMBED_FORMAT_HERE */
+/* EMBED_PARQUET_HERE */
 Gio._promisify(Gio.File.prototype, 'read_async', 'read_finish');
 Gio._promisify(Gio.InputStream.prototype, 'read_bytes_async', 'read_bytes_finish');
 
@@ -94,7 +95,7 @@ export const Klass = class LabTable extends Adw.Bin {
             ellipsize: Pango.EllipsizeMode.END, max_width_chars: 120,
             margin_end: 7, margin_bottom: 2});
         this._hint.add_css_class('dim-label');
-        this._hint.set_tooltip_text('The preview reads a bounded prefix of the file.');
+        this._hint.set_tooltip_text('The preview reads only bounded file data.');
         root.append(this._hint);
         this._scroll = new Gtk.ScrolledWindow({hexpand: true, vexpand: true,
             min_content_width: 960, min_content_height: 560,
@@ -108,7 +109,40 @@ export const Klass = class LabTable extends Adw.Bin {
             margin_top: 12, margin_start: 12}));
     }
     async _load(file) {
-        const binary = this._format === 'h5ad' || this._format === 'parquet';
+        if (this._format === 'parquet') {
+            const input = await file.read_async(GLib.PRIORITY_DEFAULT, this.cancellable);
+            try {
+                if (!input.can_seek()) throw new Error('Parquet preview requires a seekable file');
+                const readRange = async (start, end) => {
+                    if (this.cancellable.is_cancelled()) throw new Error('Parquet preview cancelled');
+                    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start ||
+                        end > this._size || end - start > LIMITS.bytes)
+                        throw new Error('Parquet byte range is outside the file or preview limit');
+                    input.seek(start, GLib.SeekType.SET, this.cancellable);
+                    const bytes = new Uint8Array(end - start);
+                    let offset = 0;
+                    while (offset < bytes.length) {
+                        if (this.cancellable.is_cancelled()) throw new Error('Parquet preview cancelled');
+                        const part = await input.read_bytes_async(Math.min(131072, bytes.length - offset),
+                            GLib.PRIORITY_DEFAULT, this.cancellable);
+                        const data = part.get_data();
+                        if (!data.length) throw new Error('Unexpected end of file in Parquet range');
+                        bytes.set(data, offset);
+                        offset += data.length;
+                    }
+                    if (this.cancellable.is_cancelled()) throw new Error('Parquet preview cancelled');
+                    return bytes;
+                };
+                this._table = await ParquetSupport.parquetPreview({size: this._size, readRange,
+                    isCancelled: () => this.cancellable.is_cancelled()});
+            } finally { try { input.close(null); } catch (_) {} }
+            if (this.cancellable.is_cancelled()) return;
+            this._types = guessTypes(this._table.rows, this._table.headers.length, this._table.headers);
+            this._renderTable();
+            this.markReady();
+            return;
+        }
+        const binary = this._format === 'h5ad';
         const {bytes, text, eof} = await readHead(file, this.cancellable, binary ? 64 : LIMITS.bytes);
         if (this.cancellable.is_cancelled()) return;
         if (binary) {

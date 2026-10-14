@@ -1,7 +1,7 @@
 # Parquet sample preview design
 
 **Date:** 2026-10-14  
-**Status:** Design approved; awaiting spec review before implementation.
+**Status:** Implemented; CI is configured to require GTK smoke checks.
 
 ## Goal
 

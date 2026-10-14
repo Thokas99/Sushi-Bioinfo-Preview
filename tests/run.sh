@@ -10,6 +10,7 @@ node tests/layout.test.mjs
 node tests/no-filter.test.mjs
 node tests/core.test.mjs
 node tests/formats.test.mjs
+node --test tests/parquet.test.mjs
 node tests/table-budget.test.mjs
 node tests/documents.test.mjs
 node tests/office.test.mjs

@@ -13,14 +13,17 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 printf 'gene,value\nTP53,1\nMYC,2\n' > "$tmp/input.csv"
+node "$ROOT/tests/make-parquet-fixture.mjs" "$tmp/input.parquet"
 
 sed -e 's/const Renderer = imports.ui.renderer;/const Renderer = {Renderer: {}};/' \
     -e 's/Implements: \[Renderer\.Renderer\]/Implements: []/' \
     "$ROOT/dist/bioinfo-table-50.js" > "$tmp/table50_smoke.js"
 xvfb-run -a gjs "$ROOT/tests/gtk-smoke-50.js" "$tmp" "$tmp/input.csv"
+xvfb-run -a gjs "$ROOT/tests/gtk-smoke-50.js" "$tmp" "$tmp/input.parquet"
 
 sed -e "s|import {Renderer, ResizePolicy} from 'resource://org/gnome/NautilusPreviewer/plugin-api-1.js';|const Renderer = {}; const ResizePolicy = {NAT_SIZE: 0};|" \
     -e "s|from 'gi://Gtk';|from 'gi://Gtk?version=4.0';|" \
     -e 's/Implements: \[Renderer\]/Implements: []/' \
     "$ROOT/dist/bioinfo-table-51.js" > "$tmp/table51_smoke.mjs"
 xvfb-run -a gjs --module "$ROOT/tests/gtk-smoke-51.mjs" "$tmp/table51_smoke.mjs" "$tmp/input.csv"
+xvfb-run -a gjs --module "$ROOT/tests/gtk-smoke-51.mjs" "$tmp/table51_smoke.mjs" "$tmp/input.parquet"
