@@ -4,6 +4,8 @@
 
 **Read-only previews of selected scientific and document files in GNOME Files.** Select a file in Nautilus and press **Space** to inspect it with GNOME Sushi.
 
+See the [changelog](CHANGELOG.md) for release history and [GitHub Releases](https://github.com/Thokas99/Sushi-Bioinfo-Preview/releases) for downloads.
+
 > [!TIP]
 > Use it for a quick look at a table, genomic records, or document text. Sushi keeps control of the preview window and keyboard shortcuts.
 
@@ -35,10 +37,10 @@ The `#` gutter shows each displayed record's position in the sampled data before
 
 ## Install
 
-With the GNOME Sushi Flatpak (`org.gnome.NautilusPreviewer`) and the host tools `flatpak` and `update-mime-database` installed, run:
+Install from the [v0.2.0 release](https://github.com/Thokas99/Sushi-Bioinfo-Preview/releases/tag/v0.2.0). With the GNOME Sushi Flatpak (`org.gnome.NautilusPreviewer`) and the host tools `flatpak` and `update-mime-database` installed, run:
 
 ```bash
-git clone https://github.com/Thokas99/Sushi-Bioinfo-Preview.git
+git clone --branch v0.2.0 --depth 1 https://github.com/Thokas99/Sushi-Bioinfo-Preview.git
 cd Sushi-Bioinfo-Preview
 bash install.sh
 flatpak kill org.gnome.NautilusPreviewer 2>/dev/null || true
@@ -83,7 +85,7 @@ Run `npm ci` to install the pinned build and test dependencies. Edit `src/`; `py
 npm test
 ```
 
-Tests cover parsing, limits, MIME registration, generated files, and mocked install/uninstall behavior. GTK loading, rendering, scrolling, and keyboard behavior require manual testing in GNOME.
+CI covers parsing, limits, MIME registration, generated files, mocked install/uninstall behavior, and GTK3/GTK4 smoke checks under Xvfb. Full rendering and interaction, including scrolling and keyboard behavior, still require a live GNOME session.
 
 Bundled dependency licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
