@@ -4,25 +4,7 @@ const ByteArray = imports.byteArray;
 const Renderer = imports.ui.renderer;
 /* EMBED_CORE_HERE */
 /* EMBED_FORMAT_HERE */
-/* EMBED_PARQUET_HERE */
 const shortText = value => String(value ?? '').replace(/[\r\n\t]/g, ' ').slice(0, 180);
-function queryInfoAsync(file, cancellable) {
-    return new Promise((resolve, reject) => file.query_info_async('standard::size', Gio.FileQueryInfoFlags.NONE,
-        GLib.PRIORITY_DEFAULT, cancellable, (f, result) => {
-            try { resolve(f.query_info_finish(result)); } catch (error) { reject(error); }
-        }));
-}
-function openReadAsync(file, cancellable) {
-    return new Promise((resolve, reject) => file.read_async(GLib.PRIORITY_DEFAULT, cancellable, (f, result) => {
-        try { resolve(f.read_finish(result)); } catch (error) { reject(error); }
-    }));
-}
-function readBytesAsync(input, count, cancellable) {
-    return new Promise((resolve, reject) => input.read_bytes_async(count, GLib.PRIORITY_DEFAULT, cancellable,
-        (stream, result) => {
-            try { resolve(stream.read_bytes_finish(result)); } catch (error) { reject(error); }
-        }));
-}
 var Klass = GObject.registerClass({
     Implements: [Renderer.Renderer],
     Properties: {
@@ -36,7 +18,7 @@ var Klass = GObject.registerClass({
     _init(file) {
         super._init({orientation: Gtk.Orientation.VERTICAL, spacing: 1, border_width: 3, visible: true});
         this._file = file;
-        this._name = file.get_basename(); this._format = formatFromName(this._name);
+        this._name = file.get_basename();
         this._cancellable = new Gio.Cancellable();
         this._sortColumn = null; this._descending = false;
         this.connect('destroy', () => this._cancellable.cancel());
@@ -65,7 +47,6 @@ var Klass = GObject.registerClass({
         this._scroll.show_all();
     }
     _load() {
-        if (this._format === 'parquet') { this._loadParquet(); return; }
         this._file.read_async(GLib.PRIORITY_DEFAULT, this._cancellable, (f, res) => {
             let stream;
             try { stream = f.read_finish(res); } catch (e) {
@@ -73,19 +54,13 @@ var Klass = GObject.registerClass({
                 return;
             }
             let count = 0; const chunks = []; let eof = false;
-            const binary = this._format === 'h5ad';
-            const limit = binary ? 64 : LIMITS.bytes;
+            const limit = LIMITS.bytes;
             const finish = () => {
                 try { stream.close(null); } catch (_) {}
                 const bytes = new Uint8Array(count); let pos = 0;
                 for (const chunk of chunks) { bytes.set(chunk, pos); pos += chunk.length; }
-                if (binary) {
-                    const info = binaryPreview(this._name, bytes, count);
-                    this._message(`${info.kind}\n${info.message}`);
-                } else {
-                    this._text = ByteArray.toString(bytes);
-                    this._partial = !eof; this._parse();
-                }
+                this._text = ByteArray.toString(bytes);
+                this._partial = !eof; this._parse();
                 this._readyNow();
             };
             const next = () => {
@@ -107,48 +82,11 @@ var Klass = GObject.registerClass({
             next();
         });
     }
-    async _loadParquet() {
-        let input;
-        try {
-            const info = await queryInfoAsync(this._file, this._cancellable);
-            const size = Number(info.get_size());
-            input = await openReadAsync(this._file, this._cancellable);
-            if (!input.can_seek()) throw new Error('Parquet preview requires a seekable file');
-            const readRange = async (start, end) => {
-                if (this._cancellable.is_cancelled()) throw new Error('Parquet preview cancelled');
-                if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start ||
-                    end > size || end - start > LIMITS.bytes)
-                    throw new Error('Parquet byte range is outside the file or preview limit');
-                input.seek(start, GLib.SeekType.SET, this._cancellable);
-                const bytes = new Uint8Array(end - start);
-                let offset = 0;
-                while (offset < bytes.length) {
-                    if (this._cancellable.is_cancelled()) throw new Error('Parquet preview cancelled');
-                    const part = await readBytesAsync(input, Math.min(131072, bytes.length - offset), this._cancellable);
-                    const data = part.get_data();
-                    if (!data.length) throw new Error('Unexpected end of file in Parquet range');
-                    bytes.set(data, offset);
-                    offset += data.length;
-                }
-                if (this._cancellable.is_cancelled()) throw new Error('Parquet preview cancelled');
-                return bytes;
-            };
-            this._table = await ParquetSupport.parquetPreview({size, readRange,
-                isCancelled: () => this._cancellable.is_cancelled()});
-            if (this._cancellable.is_cancelled()) return;
-            this._types = guessTypes(this._table.rows, this._table.headers.length, this._table.headers);
-            this._draw();
-        } catch (error) {
-            if (!this._cancellable.is_cancelled()) this._message(`Preview unavailable: ${error.message}`);
-        } finally {
-            try { input?.close(null); } catch (_) {}
-            if (!this._cancellable.is_cancelled()) this._readyNow();
-        }
-    }
     _parse() {
         const genomic = genomicPreview(this._name, this._text, this._partial);
         this._table = genomic ? {...genomic, truncatedRows: genomic.rowLimit, truncatedBytes: this._partial,
-            clippedColumns: genomic.colLimit} : prepareTable(this._text, detectSeparator(this._text, this._name), true, this._partial);
+        clippedColumns: genomic.colLimit} : prepareTable(this._text, detectSeparator(this._text, this._name),
+            /\.(csv|tsv|tab)$/i.test(this._name), this._partial);
         this._types = guessTypes(this._table.rows, this._table.headers.length, this._table.headers);
         this._draw();
     }
@@ -319,8 +257,7 @@ var Klass = GObject.registerClass({
     }
 });
 var mimeTypes = [
-    'text/tab-separated-values','text/csv','text/x-csv','application/csv','application/tab-separated-values',
+    'text/plain','text/tab-separated-values','text/csv','text/x-csv','application/csv','application/tab-separated-values',
     'text/x-sushi-bed','text/x-sushi-vcf','text/x-sushi-mtx','text/x-sushi-gff',
-    'application/x-sushi-h5ad','application/x-sushi-parquet','application/vnd.apache.parquet',
-    'application/x-parquet','text/x-bed','text/x-gff3',
+    'text/x-bed','text/x-gff3',
 ];

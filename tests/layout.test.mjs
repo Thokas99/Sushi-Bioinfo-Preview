@@ -17,8 +17,6 @@ assert.ok(/this\._scroll\.set_policy\(Gtk\.PolicyType\.ALWAYS,\s*Gtk\.PolicyType
     'GTK3 table view must keep row and column scrollbars visible');
 assert.ok(/this\._scroll\.set_policy\(Gtk\.PolicyType\.AUTOMATIC,\s*Gtk\.PolicyType\.AUTOMATIC\)/.test(gtk3),
     'GTK3 message views must not show inactive table scrollbars');
-assert.match(gtk3, /this\._message\(`\$\{info\.kind\}\\n\$\{info\.message\}`\)/,
-    'GTK3 signature-only previews must disclose metadata limitations');
 for (const [name, code] of [['GTK4', gtk4], ['GTK3', gtk3]]) {
     for (const obsolete of ['_page', '_rowPrev', '_rowNext', 'rows.slice(r0', 'pages =', 'new Gtk.Grid(',
         'Gtk.SearchEntry', 'this._search', '_filter()', 'application/gzip', 'gzipPreview']) {
@@ -40,10 +38,14 @@ assert.ok(columnWidthHints(['log2FoldChange'], [['1.42']], ['number'])[0] > hint
 const longValue = columnWidthHints(['comment'], [['x'.repeat(10_000)]], ['text']);
 assert.ok(longValue[0] <= 280 && longValue[0] > 200,
     'individual long strings must not make huge columns');
-for (const name of ['office-51.js', 'office-50.template.js', 'document-51.js', 'document-50.template.js']) {
+for (const name of ['document-51.js', 'document-50.template.js']) {
     const source = readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8');
     assert.match(source, /min_content_width: 920, min_content_height: 560/);
 }
 const mime = readFileSync(new URL('../mime/sushi-bioinfo-preview.xml', import.meta.url), 'utf8');
 assert.ok(!mime.includes('application/x-sushi-bgzf'));
+for (const name of ['table-51.js', 'table-50.template.js']) {
+    const source = readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8');
+    assert.match(source, /'text\/plain'/);
+}
 console.log('Native scrolling, compact column sizing and bounded layout confirmed.');

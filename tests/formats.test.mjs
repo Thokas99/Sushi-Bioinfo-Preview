@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {formatFromName, binaryPreview, genomicPreview} from '../src/format-core.js';
+import {formatFromName, genomicPreview} from '../src/format-core.js';
 import {LIMITS, prepareTable, sortRows, guessTypes} from '../src/table-core.js';
 assert.equal(formatFromName('data.bed'), 'bed');
-assert.equal(formatFromName('data.h5ad'), 'h5ad');
-assert.equal(formatFromName('counts.parquet'), 'parquet');
 const vcf = '##fileformat=VCFv4.3\n##source=foo\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\nchr1\t42\t.\tA\tC\t40\tPASS\tDP=20\tGT\t0/1\n';
 let out = genomicPreview('x.vcf', vcf, false);
 assert.deepEqual(out.headers.slice(0,3), ['CHROM','POS','ID']);
@@ -52,13 +50,8 @@ assert.ok(exampleGff.rows.every(row => row.length === 9));
 const exampleMtx = genomicPreview('example.mtx', fs.readFileSync(new URL('../examples/example.mtx', import.meta.url), 'utf8'), false);
 assert.equal(exampleMtx.rows.length, 6);
 assert.match(exampleMtx.notes.join(';'), /4 × 5, 6/);
-const hd = Uint8Array.from([137,72,68,70,13,10,26,10]);
-assert.equal(binaryPreview('A.h5ad', hd, 20e9).recognized, true);
-assert.equal(binaryPreview('A.h5ad', Uint8Array.from([0,0,0,0,0,0,0,0]),20e9).recognized, false);
-assert.equal(binaryPreview('A.parquet', Uint8Array.from([80,65,82,49]),1e9).recognized, true);
-assert.equal(binaryPreview('A.parquet', Uint8Array.from([0,0,0,0]),1e9).recognized, false);
 assert.deepEqual([LIMITS.bytes,LIMITS.rows,LIMITS.tableRows,LIMITS.columns,LIMITS.cells,LIMITS.fieldChars],
-    [16*1024*1024,10000,10000,128,1_280_000,512]);
+    [64*1024*1024,25000,5000,256,1_280_000,512]);
 const big = 'col1\tcol2\n' + 'sample\t42\n'.repeat(LIMITS.rows + 200);
 const parsed = prepareTable(big, '\t');
 assert.equal(parsed.rows.length, LIMITS.rows);
@@ -66,17 +59,17 @@ assert.equal(parsed.truncatedRows, true);
 const sorted = sortRows(parsed.rows, 1, true, guessTypes(parsed.rows,2));
 assert.equal(sorted.length, LIMITS.rows);
 const preview = genomicPreview('many.bed', 'chr1\t1\t2\n'.repeat(LIMITS.rows + 100), false);
-assert.equal(preview.rows.length,LIMITS.rows);
+assert.equal(preview.rows.length,LIMITS.tableRows);
 assert.equal(preview.rowLimit,true);
 assert.ok(preview.rows.every(row=>row.length===3));
-console.log('Format detection, binary signatures, genomics parsing and safety caps passed.');
+console.log('Format detection, genomics parsing and safety caps passed.');
 
 // Genomic files and general tabular files must use the same limits.
-const wideHeaders = Array.from({length: 180}, (_, i) => `sample_${i}`).join('\t');
+const wideHeaders = Array.from({length: 300}, (_, i) => `sample_${i}`).join('\t');
 const wideBed = `chr1\t1\t2\t${wideHeaders}\n`;
 const wide = genomicPreview('wide.bed', wideBed, false);
 assert.equal(wide.headers.length, LIMITS.columns);
 assert.equal(wide.colLimit, true);
 // Many tiny lines must not be eagerly split into millions of strings.
 const tiny = 'chr1\t1\t2\n'.repeat(LIMITS.rows + 20000);
-assert.equal(genomicPreview('tiny.bed', tiny, false).rows.length, LIMITS.rows);
+assert.equal(genomicPreview('tiny.bed', tiny, false).rows.length, LIMITS.tableRows);

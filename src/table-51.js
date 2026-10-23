@@ -10,7 +10,6 @@ import Pango from 'gi://Pango';
 import {Renderer, ResizePolicy} from 'resource://org/gnome/NautilusPreviewer/plugin-api-1.js';
 /* EMBED_CORE_HERE */
 /* EMBED_FORMAT_HERE */
-/* EMBED_PARQUET_HERE */
 Gio._promisify(Gio.File.prototype, 'read_async', 'read_finish');
 Gio._promisify(Gio.InputStream.prototype, 'read_bytes_async', 'read_bytes_finish');
 
@@ -62,7 +61,6 @@ export const Klass = class LabTable extends Adw.Bin {
         super(props);
         this._name = file.get_basename();
         this._size = Number(info?.get_size?.() ?? 0);
-        this._format = formatFromName(this._name);
         this._makeUI();
         this._load(file).catch(e => {
             if (this.cancellable.is_cancelled()) return;
@@ -110,56 +108,17 @@ export const Klass = class LabTable extends Adw.Bin {
             margin_top: 12, margin_start: 12}));
     }
     async _load(file) {
-        if (this._format === 'parquet') {
-            const input = await file.read_async(GLib.PRIORITY_DEFAULT, this.cancellable);
-            try {
-                if (!input.can_seek()) throw new Error('Parquet preview requires a seekable file');
-                const readRange = async (start, end) => {
-                    if (this.cancellable.is_cancelled()) throw new Error('Parquet preview cancelled');
-                    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start ||
-                        end > this._size || end - start > LIMITS.bytes)
-                        throw new Error('Parquet byte range is outside the file or preview limit');
-                    input.seek(start, GLib.SeekType.SET, this.cancellable);
-                    const bytes = new Uint8Array(end - start);
-                    let offset = 0;
-                    while (offset < bytes.length) {
-                        if (this.cancellable.is_cancelled()) throw new Error('Parquet preview cancelled');
-                        const part = await input.read_bytes_async(Math.min(131072, bytes.length - offset),
-                            GLib.PRIORITY_DEFAULT, this.cancellable);
-                        const data = part.get_data();
-                        if (!data.length) throw new Error('Unexpected end of file in Parquet range');
-                        bytes.set(data, offset);
-                        offset += data.length;
-                    }
-                    if (this.cancellable.is_cancelled()) throw new Error('Parquet preview cancelled');
-                    return bytes;
-                };
-                this._table = await ParquetSupport.parquetPreview({size: this._size, readRange,
-                    isCancelled: () => this.cancellable.is_cancelled()});
-            } finally { try { input.close(null); } catch (_) {} }
-            if (this.cancellable.is_cancelled()) return;
-            this._types = guessTypes(this._table.rows, this._table.headers.length, this._table.headers);
-            this._renderTable();
-            this.markReady();
-            return;
-        }
-        const binary = this._format === 'h5ad';
-        const {bytes, text, eof} = await readHead(file, this.cancellable, binary ? 64 : LIMITS.bytes);
+        const {bytes, text, eof} = await readHead(file, this.cancellable,
+            Math.min(this._size || LIMITS.bytes, LIMITS.bytes));
         if (this.cancellable.is_cancelled()) return;
-        if (binary) {
-            const summary = binaryPreview(this._name, bytes, this._size);
-            this._showMessage(summary.recognized ?
-                `${summary.kind} · ${formatSize(this._size)}\nMetadata not indexed` : summary.message);
-        } else {
-            const partial = !eof && (this._size === 0 || this._size > bytes.length);
-            const genomic = genomicPreview(this._name, text, partial);
-            this._table = genomic ? {
-                ...genomic, truncatedRows: genomic.rowLimit, truncatedBytes: partial,
-                clippedColumns: genomic.colLimit,
-            } : prepareTable(text, detectSeparator(text, this._name), true, partial);
-            this._types = guessTypes(this._table.rows, this._table.headers.length, this._table.headers);
-            this._renderTable();
-        }
+        const partial = !eof && (this._size === 0 || this._size > bytes.length);
+        const genomic = genomicPreview(this._name, text, partial);
+        this._table = genomic ? {
+            ...genomic, truncatedRows: genomic.rowLimit, truncatedBytes: partial,
+            clippedColumns: genomic.colLimit,
+        } : prepareTable(text, detectSeparator(text, this._name), /\.(csv|tsv|tab)$/i.test(this._name), partial);
+        this._types = guessTypes(this._table.rows, this._table.headers.length, this._table.headers);
+        this._renderTable();
         this.markReady();
     }
     _renderTable() {
@@ -341,15 +300,9 @@ export const Klass = class LabTable extends Adw.Bin {
         popover.popup();
     }
 };
-function formatSize(n) {
-    if (!Number.isFinite(n) || n <= 0) return 'unknown size';
-    const unit = Math.min(4, Math.floor(Math.log(n) / Math.log(1024)));
-    return `${(n / 1024 ** unit).toFixed(1)} ${['B','KiB','MiB','GiB','TiB'][unit]}`;
-}
 export const contentTypes = [
-    'text/tab-separated-values','text/csv','text/x-csv',
+    'text/plain','text/tab-separated-values','text/csv','text/x-csv',
     'application/csv','application/tab-separated-values',
     'text/x-sushi-bed','text/x-sushi-vcf','text/x-sushi-mtx','text/x-sushi-gff',
-    'application/x-sushi-h5ad','application/x-sushi-parquet',
-    'application/vnd.apache.parquet','application/x-parquet','text/x-bed','text/x-gff3',
+    'text/x-bed','text/x-gff3',
 ];

@@ -26,14 +26,6 @@
     <glob weight="80" pattern="*.gff3"/>
     <glob weight="80" pattern="*.gtf"/>
   </mime-type>
-  <mime-type type="application/x-sushi-h5ad">
-    <comment>AnnData H5AD data</comment>
-    <glob weight="80" pattern="*.h5ad"/>
-  </mime-type>
-  <mime-type type="application/x-sushi-parquet">
-    <comment>Apache Parquet data</comment>
-    <glob weight="80" pattern="*.parquet"/>
-  </mime-type>
   <!-- Markdown only. HTML is left to the built-in Sushi renderer. -->
   <mime-type type="text/x-sushi-markdown">
     <comment>Markdown preview document</comment>

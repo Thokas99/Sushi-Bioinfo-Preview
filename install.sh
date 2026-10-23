@@ -17,7 +17,7 @@ DATA="$HOME/.var/app/$APP/data/sushi"
 TARGET="$DATA/$SLOT"
 OLD_TARGET="$DATA/$OLD_SLOT"
 BACKUP="$DATA/bioinfo-preview-backup"
-for part in table document office; do
+for part in table document; do
   source="$ROOT/dist/bioinfo-$part-$SERIES.js"
   [[ -s "$source" ]] || { echo "Run python3 build.py (missing $source)" >&2; exit 1; }
 done
@@ -27,7 +27,7 @@ ACTIVE_INSTALL=0
 if [[ -s "$BACKUP/.installed" ]] || { [[ ! -e "$BACKUP/.uninstalled" ]] && compgen -G "$BACKUP/*" >/dev/null; }; then
   ACTIVE_INSTALL=1
 fi
-for part in table document office; do
+for part in table document; do
   dest="$TARGET/lab-$part-preview.js"
   source="$ROOT/dist/bioinfo-$part-$SERIES.js"
   # Preserve only the initial state for uninstall, never overwrite the backup.
@@ -40,13 +40,31 @@ for part in table document office; do
   install -m 0644 "$source" "$dest"
 done
 # Remove the inactive Sushi plugin copies while preserving their initial state.
-for part in table document office; do
+for part in table document; do
   stale="$OLD_TARGET/lab-$part-preview.js"
   saved="$BACKUP/$OLD_SLOT-lab-$part-preview.js"
   if (( ACTIVE_INSTALL == 0 )); then rm -f -- "$saved"; fi
   if [[ -f "$stale" || -L "$stale" ]]; then
     if (( ACTIVE_INSTALL == 0 )) || [[ ! -e "$saved" && ! -L "$saved" ]]; then cp -pP -- "$stale" "$saved"; fi
     rm -f -- "$stale"
+  fi
+done
+# Retire the old Office extraction plugin and retain any pre-install file.
+for slot in "$SLOT" "$OLD_SLOT"; do
+  obsolete="$DATA/$slot/lab-office-preview.js"
+  saved="$BACKUP/$slot-lab-office-preview.js"
+  if (( ACTIVE_INSTALL == 0 )); then rm -f -- "$saved"; fi
+  if [[ -f "$obsolete" || -L "$obsolete" ]]; then
+    if (( ACTIVE_INSTALL )); then
+      expected="$(awk '$1 == "lab-office-preview.js" {print $2; exit}' "$BACKUP/.installed" 2>/dev/null || true)"
+      actual="$(sha256sum -- "$obsolete" | awk '{print $1}')"
+      if [[ "$slot" == "$SLOT" && -n "$expected" && "$actual" == "$expected" ]]; then
+        rm -f -- "$obsolete"
+      fi
+      continue
+    fi
+    cp -pP -- "$obsolete" "$saved"
+    rm -f -- "$obsolete"
   fi
 done
 # Use one XML at a time; the v7 MIME registration must not compete with v8.
@@ -91,7 +109,7 @@ if grep -Eq '^SUSHI_LAB_REAL_OFFICE=' <<< "$OVERRIDES"; then
 fi
 {
   printf '%s %s\n' "$SLOT" "$SERIES"
-  for part in table document office; do
+  for part in table document; do
     printf 'lab-%s-preview.js %s\n' "$part" "$(sha256sum "$ROOT/dist/bioinfo-$part-$SERIES.js" | awk '{print $1}')"
   done
   printf 'sushi-bioinfo-preview.xml %s\n' "$(sha256sum "$ROOT/mime/sushi-bioinfo-preview.xml" | awk '{print $1}')"

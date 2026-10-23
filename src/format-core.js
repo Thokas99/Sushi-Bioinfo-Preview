@@ -6,30 +6,11 @@ import {LIMITS} from './table-core.js';
  */
 export function formatFromName(name) {
     const n = name.toLowerCase();
-    if (/\.(h5ad)$/.test(n)) return 'h5ad';
-    if (/\.(parquet)$/.test(n)) return 'parquet';
     if (/\.(vcf)$/.test(n)) return 'vcf';
     if (/\.(bed|bedgraph|narrowpeak|broadpeak)$/.test(n)) return 'bed';
     if (/\.(mtx)$/.test(n)) return 'mtx';
     if (/\.(gff|gff3|gtf)$/.test(n)) return 'gff';
     return 'table';
-}
-
-export function binaryPreview(name, bytes, totalSize) {
-    const format = formatFromName(name);
-    const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    const isHDF5 = data.length >= 8 && [137,72,68,70,13,10,26,10].every((n, i) => data[i] === n);
-    const isParquet = data.length >= 4 && [80,65,82,49].every((n, i) => data[i] === n);
-    const recognized = format === 'h5ad' ? isHDF5 : format === 'parquet' && isParquet;
-    const kind = format === 'h5ad' ? 'AnnData / HDF5' : 'Apache Parquet';
-    return {
-        kind, recognized, totalSize,
-        message: recognized
-            ? (format === 'h5ad'
-                ? 'HDF5 magic bytes found at offset 0. AnnData dimensions, obs/var columns and layers are not inspected.'
-                : 'Parquet leading magic bytes found. Schema, row groups, footer and row count are not inspected.')
-            : `No ${format === 'h5ad' ? 'HDF5' : 'Parquet'} magic bytes found at file start. Extension may not match file contents.`,
-    };
 }
 
 function splitLines(text, partial) {

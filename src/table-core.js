@@ -13,12 +13,12 @@ function previewLimit(name, defaultValue, minimum, maximum) {
 }
 
 const MAX_TABLE_CELLS = 10000 * 128;
-const requestedRows = previewLimit('SUSHI_BIOINFO_MAX_ROWS', 10000, 100, 25000);
-const columns = previewLimit('SUSHI_BIOINFO_MAX_COLUMNS', 128, 8, 256);
+const requestedRows = previewLimit('SUSHI_BIOINFO_MAX_ROWS', 25000, 100, 25000);
+const columns = previewLimit('SUSHI_BIOINFO_MAX_COLUMNS', 256, 8, 256);
 const tableRows = Math.min(requestedRows, Math.floor(MAX_TABLE_CELLS / columns));
 
 export const LIMITS = Object.freeze({
-    bytes: previewLimit('SUSHI_BIOINFO_MAX_MIB', 16, 1, 64) * 1024 * 1024,
+    bytes: previewLimit('SUSHI_BIOINFO_MAX_MIB', 64, 1, 64) * 1024 * 1024,
     rows: requestedRows,
     tableRows,
     columns,
@@ -32,8 +32,10 @@ export function parseDelimited(text, separator, options = {}) {
     const colLimit = options.maxColumns ?? LIMITS.columns;
     const keepPartial = options.keepPartial ?? false;
     const fieldChars = options.fieldChars ?? LIMITS.fieldChars;
+    const maxCells = options.maxCells ?? Infinity;
     const rows = [];
     const widths = [];
+    let cells = 0;
     let row = [];
     let field = '';
     let fullCols = 0;
@@ -43,6 +45,7 @@ export function parseDelimited(text, separator, options = {}) {
     const clippedFieldColumns = new Map();
     let fieldClipped = false;
     let hitRowLimit = false;
+    let hitCellLimit = false;
     let startOfField = true;
 
     const append = ch => {
@@ -68,8 +71,13 @@ export function parseDelimited(text, separator, options = {}) {
     };
     const flushRow = () => {
         flushField();
+        if (cells + row.length > maxCells) {
+            hitCellLimit = true;
+            return;
+        }
         rows.push(row);
         widths.push(fullCols);
+        cells += row.length;
         row = [];
         fullCols = 0;
     };
@@ -95,6 +103,7 @@ export function parseDelimited(text, separator, options = {}) {
         } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
             if (ch === '\r' && text[i + 1] === '\n') i++;
             flushRow();
+            if (hitCellLimit) break;
             if (rows.length >= rowLimit) {
                 hitRowLimit = i < text.length - 1;
                 break;
@@ -105,10 +114,10 @@ export function parseDelimited(text, separator, options = {}) {
         }
     }
     const unfinished = fullCols > 0 || field.length > 0 || !startOfField;
-    if (unfinished && rows.length < rowLimit && keepPartial && !inQuotes) flushRow();
+    if (unfinished && rows.length < rowLimit && keepPartial && !inQuotes && !hitCellLimit) flushRow();
     return {
-        rows, widths, clippedColumns, clippedFields, clippedFieldColumns, hitRowLimit,
-        droppedPartial: unfinished && !keepPartial,
+        rows, widths, clippedColumns, clippedFields, clippedFieldColumns, hitRowLimit, hitCellLimit,
+        droppedPartial: unfinished && !keepPartial && !hitCellLimit,
         unterminatedQuote: inQuotes,
     };
 }
@@ -138,14 +147,15 @@ export function detectSeparator(text, extension = '') {
 
 export function prepareTable(text, separator, hasHeader = true, partialByteRead = false) {
     const parsed = parseDelimited(text, separator, {
-        maxRows: LIMITS.tableRows + (hasHeader ? 2 : 1),
+        maxRows: LIMITS.rows + (hasHeader ? 2 : 1),
         maxColumns: LIMITS.columns,
+        maxCells: LIMITS.cells,
         keepPartial: !partialByteRead,
     });
     const all = parsed.rows;
     const originalHeaders = hasHeader ? (all.shift() ?? []) : [];
     const parsedRowCount = all.length;
-    if (all.length > LIMITS.tableRows) all.length = LIMITS.tableRows;
+    if (all.length > LIMITS.rows) all.length = LIMITS.rows;
     const rows = all;
     let cols = originalHeaders.length;
     for (const row of rows) cols = Math.max(cols, row.length);
@@ -173,7 +183,7 @@ export function prepareTable(text, separator, hasHeader = true, partialByteRead 
         : sampledWidths.filter(width => width !== expectedWidth).length;
     return {
         headers, rows, separator, hasHeader,
-        truncatedRows: parsed.hitRowLimit || parsedRowCount > LIMITS.tableRows,
+        truncatedRows: parsed.hitRowLimit || parsed.hitCellLimit || parsedRowCount > LIMITS.rows,
         truncatedBytes: partialByteRead,
         clippedFields: truncatedHeader || truncatedFields.size > 0,
         truncatedHeader,
@@ -181,8 +191,7 @@ export function prepareTable(text, separator, hasHeader = true, partialByteRead 
         clippedColumns: parsed.clippedColumns,
         incompleteRecord: partialByteRead && parsed.droppedPartial,
         raggedRows,
-        cellLimited: LIMITS.tableCellLimitActive &&
-            (parsed.hitRowLimit || parsedRowCount > LIMITS.tableRows),
+        cellLimited: parsed.hitCellLimit,
         quoteWarning: parsed.unterminatedQuote && !partialByteRead,
     };
 }

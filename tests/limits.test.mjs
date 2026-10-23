@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import {LIMITS as standard} from '../src/table-core.js';
-assert.equal(standard.bytes, 16*1024*1024);
-assert.equal(standard.rows, 10000);
-assert.equal(standard.columns, 128);
+assert.equal(standard.bytes, 64*1024*1024);
+assert.equal(standard.rows, 25000);
+assert.equal(standard.columns, 256);
 assert.equal(standard.cells, 1_280_000);
-assert.equal(standard.tableRows, 10000);
-assert.equal(standard.tableCellLimitActive, false);
+assert.equal(standard.tableRows, 5000);
+assert.equal(standard.tableCellLimitActive, true);
 globalThis.GLib = {getenv: key => ({
     SUSHI_BIOINFO_MAX_MIB: '32',
     SUSHI_BIOINFO_MAX_ROWS: '20000',

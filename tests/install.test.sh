@@ -37,7 +37,7 @@ for version in 50.0 51.1; do
   (HOME="$home" XDG_DATA_HOME="$home/.local/share" PATH="$tmp/bin:$PATH" bash "$ROOT/install.sh") >/dev/null
   active="$data/$slot"
   test -s "$active/lab-table-preview.js"
-  test -s "$active/lab-office-preview.js"
+  test ! -e "$active/lab-office-preview.js"
   test -s "$active/lab-document-preview.js"
   [[ $(cat "$home/document-target") == 'symlink target data' ]]
   test ! -e "$data/$other/lab-office-preview.js"
@@ -162,7 +162,7 @@ copy="$tmp/copy"
 mkdir -p "$copy"
 cp -R "$ROOT/dist" "$ROOT/mime" "$copy/"
 cp "$ROOT/install.sh" "$copy/"
-rm "$copy/dist/bioinfo-office-51.js"
+rm "$copy/dist/bioinfo-document-51.js"
 home="$tmp/missing"
 make_home "$home" 51.1
 (HOME="$home" XDG_DATA_HOME="$home/.local/share" PATH="$tmp/bin:$PATH" bash "$copy/install.sh") >/dev/null 2>&1 && exit 1

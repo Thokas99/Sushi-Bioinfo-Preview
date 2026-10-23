@@ -11,7 +11,7 @@ mkdir -p "$tmp/data/mime/packages"
 cp "$ROOT/mime/sushi-bioinfo-preview.xml" "$tmp/data/mime/packages/"
 XDG_DATA_HOME="$tmp/data" update-mime-database "$tmp/data/mime" >/dev/null
 globs="$tmp/data/mime/globs2"
-for pattern in '*.vcf' '*.bed' '*.mtx' '*.gff3' '*.gtf' '*.h5ad' '*.parquet' '*.md'; do
+for pattern in '*.vcf' '*.bed' '*.mtx' '*.gff3' '*.gtf' '*.md'; do
   grep -Fq ":$pattern" "$globs" || { echo "Missing MIME glob: $pattern" >&2; exit 1; }
 done
 if grep -Eq ':\*\.(html|htm|gz|bgz|bgzf|zip)$' "$globs"; then

@@ -11,8 +11,11 @@ assert.equal(LIMITS.rows, 25000);
 assert.equal(LIMITS.tableRows, 5000);
 assert.ok(LIMITS.tableRows * LIMITS.columns <= LIMITS.cells);
 
-const table = prepareTable('a,b\n' + '1,2\n'.repeat(LIMITS.tableRows + 2), ',');
-assert.equal(table.rows.length, LIMITS.tableRows);
+const width = 64;
+const wideHeader = Array.from({length: width}, (_, i) => `c${i}`).join(',');
+const wideRow = Array(width).fill('x').join(',');
+const table = prepareTable(`${wideHeader}\n` + `${wideRow}\n`.repeat(Math.floor(LIMITS.cells / width) + 2), ',');
+assert.equal(table.rows.length, Math.floor(LIMITS.cells / width) - 1);
 assert.equal(table.cellLimited, true);
 assert.match(previewStatus(table).tooltip, /total cell limit/i);
 
