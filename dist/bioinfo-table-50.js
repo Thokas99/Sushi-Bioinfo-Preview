@@ -778,7 +778,7 @@ var Klass = GObject.registerClass({
     }
 });
 var mimeTypes = [
-    'text/plain','text/tab-separated-values','text/csv','text/x-csv','application/csv','application/tab-separated-values',
+    'text/tab-separated-values','text/csv','text/x-csv','application/csv','application/tab-separated-values',
     'text/x-sushi-bed','text/x-sushi-vcf','text/x-sushi-mtx','text/x-sushi-gff',
     'text/x-bed','text/x-gff3',
 ];

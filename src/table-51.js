@@ -301,7 +301,7 @@ export const Klass = class LabTable extends Adw.Bin {
     }
 };
 export const contentTypes = [
-    'text/plain','text/tab-separated-values','text/csv','text/x-csv',
+    'text/tab-separated-values','text/csv','text/x-csv',
     'application/csv','application/tab-separated-values',
     'text/x-sushi-bed','text/x-sushi-vcf','text/x-sushi-mtx','text/x-sushi-gff',
     'text/x-bed','text/x-gff3',

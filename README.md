@@ -8,14 +8,14 @@ Open a file in GNOME Files, press **Space**, and take a look. This adds read-onl
 
 | Files | What you see |
 |---|---|
-| CSV, TSV, TXT, plain text | A sortable table. CSV and TSV use the first row as column names; other text is shown as rows. |
+| CSV, TSV | A sortable table. The first row supplies column names. |
 | VCF | Variant fields and sample columns as text. Genotypes are not interpreted; POS coordinates start at 1. |
 | BED, bedGraph, narrowPeak, broadPeak | Interval fields. BED starts at 0; ends are exclusive. |
 | GFF, GFF3, GTF | The standard nine fields. Attributes stay as text; coordinates start at 1 and include the end. |
 | MTX (Matrix Market) | Stored entries and declared dimensions. Sparse matrices stay sparse. |
 | Markdown | A local rendered preview and source view. |
 
-HTML, PDF, binary, compressed, and other files are left to Sushi. No document extraction gymnastics.
+Plain .txt, HTML, PDF, binary, compressed, and other files are left to Sushi's default preview. No document extraction gymnastics.
 
 ## Using the table
 
@@ -28,7 +28,7 @@ The `#` column counts sampled records before sorting; it is not a file line numb
 
 ## Limits
 
-Text previews read up to 64 MiB. CSV, TSV, and plain text tables show at most 25,000 rows, 256 columns, 1,280,000 cells, and 512 characters per field. Wide tables get fewer rows to stay within the cell budget. Genomic text previews show at most 5,000 rows. Larger files get a useful peek, not a full audit; later records may be missing. Use the right tools to validate or analyze a complete dataset.
+Text previews read up to 64 MiB. CSV and TSV tables show at most 25,000 rows, 256 columns, 1,280,000 cells, and 512 characters per field. Wide tables get fewer rows to stay within the cell budget. Genomic text previews show at most 5,000 rows. Larger files get a useful peek, not a full audit; later records may be missing. Use the right tools to validate or analyze a complete dataset.
 
 You can lower the preview budgets for Sushi’s Flatpak with `SUSHI_BIOINFO_MAX_MIB`, `SUSHI_BIOINFO_MAX_ROWS`, and `SUSHI_BIOINFO_MAX_COLUMNS`. They cannot exceed the limits above. For example:
 

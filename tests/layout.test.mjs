@@ -46,6 +46,6 @@ const mime = readFileSync(new URL('../mime/sushi-bioinfo-preview.xml', import.me
 assert.ok(!mime.includes('application/x-sushi-bgzf'));
 for (const name of ['table-51.js', 'table-50.template.js']) {
     const source = readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8');
-    assert.match(source, /'text\/plain'/);
+    assert.ok(!source.includes("'text/plain'"), name + ': plain text must use Sushi default preview');
 }
 console.log('Native scrolling, compact column sizing and bounded layout confirmed.');
