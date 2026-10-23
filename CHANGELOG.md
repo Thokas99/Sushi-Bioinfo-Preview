@@ -4,7 +4,7 @@ Notable changes to Sushi Bioinfo Preview are documented here. This changelog fol
 
 ## [Unreleased]
 
-## [0.2.1] - 2026-10-14
+## [0.2.1] - 2026-10-23
 
 ### Added
 
@@ -12,7 +12,13 @@ Notable changes to Sushi Bioinfo Preview are documented here. This changelog fol
 
 ### Changed
 
+- Raise the default table preview budget to 64 MiB, 25,000 rows, and 256 columns while retaining the 1.28-million-cell cap.
+- Leave plain .txt files to Sushi's default preview and focus custom table routing on CSV/TSV and scientific text formats.
 - Use Node 24 compatible GitHub Actions and pin CI to Ubuntu 24.04.
+
+### Removed
+
+- Remove Parquet preview and Office document extraction; unsupported documents stay with Sushi.
 
 ## [0.2.0] - 2026-10-14
 
